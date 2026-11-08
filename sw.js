@@ -1,5 +1,5 @@
 /* ねこコード：ネットがなくても開けるようにする */
-const VERSION = 'nekocode-v5';
+const VERSION = 'nekocode-v7';
 const FILES = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/app.js', 'js/cloud.js', 'js/firebase-config.js', 'js/cats.js', 'js/problems.js', 'js/engine.js', 'js/runner-worker.js', 'vendor/acorn.js', 'vendor/prism.js',
@@ -17,7 +17,7 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   // 自分のファイル：まずネット、だめならキャッシュ（更新がすぐ反映されるように）
   if (url.origin === location.origin) {
-    e.respondWith(fetch(req).then((res) => { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); return res; }).catch(() => caches.match(req, { ignoreSearch: true })));
+    e.respondWith(fetch(req, { cache: 'no-cache' }).then((res) => { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); return res; }).catch(() => caches.match(req, { ignoreSearch: true })));
     return;
   }
   // フォント：キャッシュ優先
