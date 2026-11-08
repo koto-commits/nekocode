@@ -1,8 +1,8 @@
 /* ねこコード：ネットがなくても開けるようにする */
-const VERSION = 'nekocode-v2';
+const VERSION = 'nekocode-v5';
 const FILES = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
-  'js/app.js', 'js/cats.js', 'js/problems.js', 'js/engine.js', 'js/runner-worker.js', 'vendor/acorn.js', 'vendor/prism.js',
+  'js/app.js', 'js/cloud.js', 'js/firebase-config.js', 'js/cats.js', 'js/problems.js', 'js/engine.js', 'js/runner-worker.js', 'vendor/acorn.js', 'vendor/prism.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'
 ];
 self.addEventListener('install', (e) => {
@@ -21,7 +21,7 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   // フォント：キャッシュ優先
-  if (url.hostname.includes('fonts.googleapis.com') || url.hostname.includes('fonts.gstatic.com')) {
+  if (url.hostname.includes('fonts.googleapis.com') || url.hostname.includes('fonts.gstatic.com') || url.hostname === 'www.gstatic.com') {
     e.respondWith(caches.match(req).then((hit) => hit || fetch(req).then((res) => { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); return res; })));
   }
 });

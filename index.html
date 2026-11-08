@@ -22,9 +22,12 @@
   <div class="app">
     <header class="top">
       <div class="brand"><span class="brand-en">NEKO CODE</span><span class="brand-ja">ねこコード</span></div>
+      <div class="top-right">
+      <button class="buddy" id="buddy" type="button" aria-label="相棒のねこ"><span class="buddy-say" id="buddySay" hidden></span><canvas id="buddyCv"></canvas></button>
       <button class="katsuo-chip" id="katsuoChip" type="button" aria-label="かつおぶし">
         <span class="katsuo-ico" aria-hidden="true"></span><b id="katsuoNum">0</b>
       </button>
+      </div>
     </header>
 
     <main id="view" class="view" tabindex="-1"></main>
@@ -48,6 +51,8 @@
   <script src="js/cats.js"></script>
   <script src="js/problems.js"></script>
   <script src="js/engine.js"></script>
+  <script src="js/firebase-config.js"></script>
   <script src="js/app.js"></script>
+  <script type="module" src="js/cloud.js"></script>
 </body>
 </html>

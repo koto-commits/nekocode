@@ -53,7 +53,58 @@ function fresh(){
 let S;
 try { S = JSON.parse(localStorage.getItem(SAVE_KEY)) || fresh(); } catch(e) { S = fresh(); }
 S = Object.assign(fresh(), S);
-function save(){ try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch(e){} }
+function save(quiet){
+  if (!quiet) S.updatedAt = Date.now();
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch(e){}
+  if (!quiet) cloudPushSoon();
+}
+/* ---- クラウド同期 ---- */
+let cloudUser = null, pushT = null;
+const cloudOn = () => !!(window.NekoCloud && window.NekoCloud.enabled);
+function cloudPushSoon(){ if (!cloudUser || !cloudOn()) return; clearTimeout(pushT); pushT = setTimeout(cloudPush, 1500); }
+async function cloudPush(){
+  if (!cloudUser || !cloudOn()) return;
+  try { S.syncUid = cloudUser.uid; await window.NekoCloud.save(cloudUser.uid, { data: JSON.stringify(S), updatedAt: S.updatedAt || Date.now() }); }
+  catch(e) {}
+}
+function adopt(remote, uid){
+  try {
+    const d = JSON.parse(remote.data);
+    S = Object.assign(fresh(), d); S.syncUid = uid; S.updatedAt = remote.updatedAt;
+    save(true); setKatsuo(S.katsuo); buddyRender();
+    if (UI.screen !== 'task') go(UI.tab);
+  } catch(e) {}
+}
+function hasProgress(){ return S.katsuo > 0 || Object.keys(S.prog).length > 0 || Object.keys(S.cats.owned).length > 1; }
+async function cloudCheck(){
+  if (!cloudUser || !cloudOn()) return;
+  const uid = cloudUser.uid;
+  let remote = null;
+  try { remote = await window.NekoCloud.load(uid); } catch(e) { return; }
+  if (!remote) { S.syncUid = uid; save(); await cloudPush(); toast('記録をクラウドに保存しました'); return; }
+  if (S.syncUid === uid) {
+    if ((remote.updatedAt || 0) > (S.updatedAt || 0)) { adopt(remote, uid); toast('ほかの端末の記録を読み込みました'); }
+    else if ((S.updatedAt || 0) > (remote.updatedAt || 0)) cloudPush();
+    return;
+  }
+  if (!hasProgress()) { adopt(remote, uid); toast('クラウドの記録を読み込みました'); return; }
+  let r = null; try { r = JSON.parse(remote.data); } catch(e) {}
+  openSheet(h('div', { class:'h', text:'どちらの記録を使いますか？' }),
+    h('p', { class:'sub', text:'この端末にも、クラウド（ほかの端末）にも記録があります。使わないほうは上書きされます。' }),
+    h('div', { class:'mini-stats' },
+      h('div', { class:'stat' }, h('b', { text: S.katsuo }), h('span', { text:'この端末のかつおぶし' })),
+      h('div', { class:'stat' }, h('b', { text: r ? r.katsuo : '?' }), h('span', { text:'クラウドのかつおぶし' })),
+      h('div', { class:'stat' }, h('b', { text: r ? Object.keys(r.prog || {}).length : '?' }), h('span', { text:'クラウドのクリア数' }))),
+    h('div', { class:'btns' },
+      h('button', { class:'btn', type:'button', onclick: () => { S.syncUid = uid; save(); cloudPush(); closeSheet(); toast('この端末の記録を使います'); } }, 'この端末'),
+      h('button', { class:'btn primary', type:'button', onclick: () => { adopt(remote, uid); closeSheet(); toast('クラウドの記録を使います'); } }, 'クラウド')));
+}
+function cloudInit(){
+  if (!window.NekoCloud || !window.NekoCloud.enabled) { if (UI.tab === 'shop' && UI.screen === 'shop') go('shop'); return; }
+  window.NekoCloud.onUser((u) => { cloudUser = u; if (u) cloudCheck(); if (UI.screen === 'shop') go('shop'); });
+}
+if (window.NekoCloud) setTimeout(cloudInit, 0); else window.addEventListener('nekocloud', cloudInit, { once:true });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && cloudUser) cloudCheck(); });
 function dayRec(k){ k = k || today(); if (!S.days[k]) S.days[k] = { sec:0, items:[] }; return S.days[k]; }
 function setKatsuo(n){ S.katsuo = n; $('#katsuoNum').textContent = S.katsuo; }
 
@@ -80,12 +131,23 @@ const SAY = {
   ng:['＼おしいにゃ／','＼もう1回にゃ／','＼ゆっくりでいいにゃ／']
 };
 
+/* ---------- 相棒ねこ（どの画面でも上にいる） ---------- */
+let buddyT;
+function buddyRender(){ const cv = $('#buddyCv'); if (cv) drawCat(cv, catDef(S.cats.partner), 'sit', 2); }
+function buddySay(text, mood){
+  const b = $('#buddy'), say = $('#buddySay'); if (!b) return;
+  say.textContent = text; say.hidden = false;
+  b.classList.remove('hop','shake'); void b.offsetWidth; if (mood) b.classList.add(mood);
+  clearTimeout(buddyT); buddyT = setTimeout(() => { say.hidden = true; b.classList.remove('hop','shake'); }, 2600);
+}
+$('#buddy').addEventListener('click', () => buddySay(pick(SAY.tap), 'hop'));
 /* ---------- 画面の切りかえ ---------- */
 const UI = { tab:'home', screen:'home', month:null, free:null };
 let session = null;
 let homeTimer = null;
 function go(tab){
   leaveTask();
+  if (KB.el) { KB.el.hidden = true; document.body.classList.remove('kb-on'); }
   UI.tab = tab; UI.screen = tab;
   document.querySelectorAll('#tabbar button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   clearInterval(homeTimer);
@@ -257,21 +319,208 @@ function renderReview(v){
 /* =========================================================
    問題の画面
    ========================================================= */
-const KEYS = {
-  js:   ['⇥','{','}','(',')','[',']',';','=',"'",'+','-','*','/','<','>','.',',',':','!','&','|','%','"','`'],
-  html: ['⇥','<','>','/','=','"',"'",'!','-','.','#',':',';','{','}'],
-  css:  ['⇥','{','}',':',';','.','#','-','(',')','"',"'",',','%','/']
+/* ---- 入力をらくにする道具 ---- */
+const SYMBOLS = {
+  js:   ['{','}','(',')','[',']',';','=',"'",'"','+','-','*','/','%','<','>','!','&','|','.',',',':','?','`','_'],
+  html: ['<','>','/','=','"',"'",'!','-','.','#',':',';','{','}','(',')','&'],
+  css:  ['{','}',':',';','.','#','-','(',')','"',"'",',','%','/','*','!','>']
 };
+// ¦ はカーソルの位置
+const WORDS = {
+  js: ['const ¦','let ¦','function ¦','return ¦','if (¦)','else','else if (¦)','for (¦)','console.log(¦)','.length','.push(¦)','Math.round(¦)','true','false','null','=== ','!== ','>= ','<= ','&& ','|| ','i++','i--','document.body.append(¦)'],
+  html: ['<h1>¦</h1>','<h2>¦</h2>','<p>¦</p>','<ul>¦</ul>','<ol>¦</ol>','<li>¦</li>','<a href="¦"></a>','<img src="¦" alt="">','<div>¦</div>','<button>¦</button>','<input type="text" placeholder="¦">','class="¦"','id="¦"','<br>'],
+  css: ['color: ¦;','background-color: ¦;','font-size: ¦px;','font-weight: bold;','padding: ¦px;','margin: ¦px;','border: ¦px solid ;','border-radius: ¦px;','width: ¦px;','height: ¦px;','text-align: center;','px','red','blue','green','black','white','gray','pink','yellow']
+};
+const TOUCH = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+const PAIRS = { '(':')', '[':']', '{':'}', "'":"'", '"':'"', '`':'`' };
+const CLOSERS = { ')':1, ']':1, '}':1, "'":1, '"':1, '`':1 };
+
+function putText(ta, text){
+  const cut = text.indexOf('¦');
+  const s = ta.selectionStart, e = ta.selectionEnd;
+  const clean = text.replace('¦', '');
+  ta.setRangeText(clean, s, e, 'end');
+  if (cut >= 0) { const p = s + cut; ta.setSelectionRange(p, p); }
+  ta.dispatchEvent(new Event('input'));
+}
+/* ( を打ったら ) も、などの自動入力 */
+function typeChar(ta, ch, kind){
+  const v = ta.value, s = ta.selectionStart, e = ta.selectionEnd, next = v[s] || '';
+  const pairOK = kind !== 'html' || ch === '"' || ch === "'";
+  if (s === e && CLOSERS[ch] && next === ch) { ta.setSelectionRange(s+1, s+1); ta.dispatchEvent(new Event('input')); return true; }
+  if (PAIRS[ch] && pairOK) {
+    const isQuote = ch === "'" || ch === '"' || ch === '`';
+    if (isQuote && s === e && /[\w$]/.test(v[s-1] || '')) return false;  // don't のようなとき
+    const sel = v.slice(s, e);
+    ta.setRangeText(ch + sel + PAIRS[ch], s, e, 'end');
+    ta.setSelectionRange(s + 1, s + 1 + sel.length);
+    ta.dispatchEvent(new Event('input'));
+    return true;
+  }
+  return false;
+}
+function newLine(ta){
+  const v = ta.value, s = ta.selectionStart, e = ta.selectionEnd;
+  const lineStart = v.lastIndexOf('\n', s - 1) + 1;
+  const indent = (v.slice(lineStart, s).match(/^[ \t]*/) || [''])[0];
+  const prev = v[s-1], next = v[e];
+  if ((prev === '{' && next === '}') || (prev === '(' && next === ')') || (prev === '[' && next === ']')) {
+    ta.setRangeText('\n' + indent + '  ' + '\n' + indent, s, e, 'end');
+    const p = s + 1 + indent.length + 2; ta.setSelectionRange(p, p);
+  } else {
+    const extra = (prev === '{' || prev === '(' || prev === '[') ? '  ' : '';
+    ta.setRangeText('\n' + indent + extra, s, e, 'end');
+  }
+  ta.dispatchEvent(new Event('input'));
+}
+function backDelete(ta){
+  const v = ta.value, s = ta.selectionStart, e = ta.selectionEnd;
+  if (s === e && s > 0 && PAIRS[v[s-1]] && v[s] === PAIRS[v[s-1]]) {
+    ta.setRangeText('', s-1, s+1, 'end'); ta.dispatchEvent(new Event('input')); return true;
+  }
+  return false;
+}
+/* カーソルを動かす */
+function moveCaret(ta, dir){
+  const v = ta.value; let p = ta.selectionEnd;
+  if (dir === 'left') p = Math.max(0, (ta.selectionStart !== ta.selectionEnd ? ta.selectionStart : p - 1));
+  else if (dir === 'right') p = Math.min(v.length, p + 1);
+  else {
+    const lineStart = v.lastIndexOf('\n', p - 1) + 1, col = p - lineStart;
+    if (dir === 'up') {
+      if (lineStart === 0) p = 0;
+      else { const prevStart = v.lastIndexOf('\n', lineStart - 2) + 1; p = Math.min(prevStart + col, lineStart - 1); }
+    } else {
+      const nl = v.indexOf('\n', p);
+      if (nl === -1) p = v.length;
+      else { const nextEnd = v.indexOf('\n', nl + 1); p = Math.min(nl + 1 + col, nextEnd === -1 ? v.length : nextEnd); }
+    }
+  }
+  ta.setSelectionRange(p, p);
+  // カーソルが見えるように
+  const lines = v.slice(0, p).split('\n').length - 1, lh = parseFloat(getComputedStyle(ta).lineHeight) || 27;
+  const y = lines * lh;
+  if (y < ta.scrollTop) ta.scrollTop = y; else if (y + lh * 2 > ta.scrollTop + ta.clientHeight) ta.scrollTop = y - ta.clientHeight + lh * 2;
+  ta.dispatchEvent(new Event('scroll'));
+}
+/* タップ（指が動いたらスクロールあつかいで入力しない） */
+function tapButton(label, onTap, cls, aria){
+  const b = h('button', { type:'button', class: cls || '', 'aria-label': aria || label, text: label, tabindex:'-1' });
+  let sx = 0, sy = 0, moved = false, timer = null, rep = null;
+  b.addEventListener('mousedown', (ev) => ev.preventDefault());
+  b.addEventListener('pointerdown', (ev) => { sx = ev.clientX; sy = ev.clientY; moved = false;
+    if (b.dataset.repeat) { timer = setTimeout(() => { rep = setInterval(onTap, 70); }, 380); } });
+  b.addEventListener('pointermove', (ev) => { if (Math.abs(ev.clientX - sx) > 8 || Math.abs(ev.clientY - sy) > 8) { moved = true; clearTimeout(timer); clearInterval(rep); rep = null; } });
+  const stop = () => { clearTimeout(timer); clearInterval(rep); rep = null; };
+  b.addEventListener('pointercancel', () => { moved = true; stop(); });
+  b.addEventListener('pointerup', () => { const repeated = !!rep; stop(); if (!moved && !repeated) onTap(); });
+  b.addEventListener('pointerleave', stop);
+  b.addEventListener('click', (ev) => { if (ev.detail === 0) onTap(); });
+  return b;
+}
+
+/* ---- キーボードのすぐ上にくっつく道具（スマホだけ） ---- */
+const QUICK = {
+  js:   ['(',')','{','}','[',']',';','=',"'",'.','+','<','>','!',','],
+  html: ['<','>','/','=','"',"'",'!','-'],
+  css:  ['{','}',':',';','.','#','-','(',')']
+};
+const KB = { ta:null, kind:'js', open:false, mode:'sym', hideT:null, el:null };
+function kbEnsure(){
+  if (KB.el) return KB.el;
+  const el = h('div', { class:'kbar', id:'kbar', hidden:true, role:'toolbar', 'aria-label':'入力の道具' });
+  el.addEventListener('mousedown', (ev) => { if (ev.target.closest('button')) ev.preventDefault(); });
+  document.body.append(el);
+  KB.el = el;
+  if (window.visualViewport) { visualViewport.addEventListener('resize', kbPlace); visualViewport.addEventListener('scroll', kbPlace); }
+  window.addEventListener('scroll', kbPlace, { passive:true });
+  return el;
+}
+function kbAct(fn){
+  return () => {
+    const ta = KB.ta; if (!ta) return;
+    const s = ta._sel || [ta.selectionStart, ta.selectionEnd];
+    if (document.activeElement !== ta) { ta.focus({ preventScroll:true }); ta.setSelectionRange(s[0], s[1]); }
+    fn(ta);
+    ta._sel = [ta.selectionStart, ta.selectionEnd];
+    keepCaretVisible(ta);
+  };
+}
+function kbBuild(){
+  const el = kbEnsure(), kind = KB.kind;
+  el.innerHTML = '';
+  const row = h('div', { class:'kb-row' });
+  ['left','right','up','down'].forEach(d => { const b = tapButton({left:'←',up:'↑',down:'↓',right:'→'}[d], kbAct(ta => moveCaret(ta, d)), 'arrow', {left:'左へ',up:'上の行へ',down:'下の行へ',right:'右へ'}[d]); b.dataset.repeat = '1'; row.append(b); });
+  row.append(tapButton('⇥', kbAct(ta => putText(ta, '  ')), 'arrow', '字下げ'));
+  QUICK[kind].forEach(k => row.append(tapButton(k, kbAct(ta => { if (!typeChar(ta, k, kind)) putText(ta, k); }))));
+  const more = tapButton(KB.open ? '▼' : '▲', () => { KB.open = !KB.open; kbBuild(); kbPlace(); }, 'more', KB.open ? 'たたむ' : 'もっと見る');
+  const wrap = h('div', { class:'kb-top' }, h('div', { class:'kb-scroll' }, row), more);
+  el.append(wrap);
+  if (KB.open) {
+    const tabs = h('div', { class:'kb-tabs' },
+      tapButton('記号', () => { KB.mode = 'sym'; kbBuild(); kbPlace(); }, KB.mode === 'sym' ? 'on' : ''),
+      tapButton('ことば', () => { KB.mode = 'word'; kbBuild(); kbPlace(); }, KB.mode === 'word' ? 'on' : ''));
+    const grid = h('div', { class:'kb-grid ' + KB.mode });
+    if (KB.mode === 'sym') SYMBOLS[kind].forEach(k => grid.append(tapButton(k, kbAct(ta => { if (!typeChar(ta, k, kind)) putText(ta, k); }))));
+    else WORDS[kind].forEach(w => grid.append(tapButton(w.replace('¦',''), kbAct(ta => putText(ta, w)), 'word')));
+    el.append(tabs, grid);
+  }
+}
+function kbPlace(){
+  const el = KB.el; if (!el || el.hidden) return;
+  const vv = window.visualViewport;
+  const bottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+  el.style.top = Math.max(0, bottom - el.offsetHeight) + 'px';
+}
+function kbShow(ta, kind){
+  if (!TOUCH) return;
+  clearTimeout(KB.hideT);
+  const changed = KB.ta !== ta || KB.kind !== kind;
+  KB.ta = ta; KB.kind = kind;
+  const el = kbEnsure();
+  if (changed || el.hidden) kbBuild();
+  el.hidden = false; document.body.classList.add('kb-on');
+  kbPlace(); setTimeout(kbPlace, 120); setTimeout(kbPlace, 400);
+}
+function kbHideSoon(){
+  clearTimeout(KB.hideT);
+  KB.hideT = setTimeout(() => { if (KB.el && !(document.activeElement && document.activeElement.classList.contains('code'))) { KB.el.hidden = true; document.body.classList.remove('kb-on'); } }, 250);
+}
+/* 打っているところがキーボードや道具に隠れないように */
+function keepCaretVisible(ta){
+  const v = ta.value, p = ta.selectionEnd;
+  const lh = parseFloat(getComputedStyle(ta).lineHeight) || 27;
+  const line = v.slice(0, p).split('\n').length - 1;
+  const r = ta.getBoundingClientRect();
+  const caretTop = r.top + 12 + line * lh - ta.scrollTop;
+  const vv = window.visualViewport;
+  const viewTop = vv ? vv.offsetTop : 0;
+  const barTop = (KB.el && !KB.el.hidden) ? KB.el.getBoundingClientRect().top : (vv ? vv.offsetTop + vv.height : window.innerHeight);
+  if (caretTop + lh + 8 > barTop) window.scrollBy(0, caretTop + lh + 8 - barTop);
+  else if (caretTop < viewTop + 70) window.scrollBy(0, caretTop - viewTop - 70);
+}
+/* 書いた行の数に合わせて入力欄をのばす */
+function autoGrow(ta){
+  const min = parseFloat(ta.dataset.min || '0') || 0;
+  ta.style.height = 'auto';
+  ta.style.height = Math.max(min, ta.scrollHeight + 4) + 'px';
+}
+
 function keyBar(ta, kind){
-  const bar = h('div', { class:'keys', role:'toolbar', 'aria-label':'記号' });
-  KEYS[kind].forEach(k => {
-    const b = h('button', { type:'button', class: k === '⇥' ? 'wide' : '', 'aria-label': k === '⇥' ? '字下げ' : k, text: k === '⇥' ? '字下げ' : k });
-    const ins = () => { const s = ta.selectionStart, e = ta.selectionEnd; ta.setRangeText(k === '⇥' ? '  ' : k, s, e, 'end'); ta.dispatchEvent(new Event('input')); };
-    b.addEventListener('pointerdown', (ev) => { ev.preventDefault(); ins(); });
-    b.addEventListener('click', (ev) => { if (ev.detail === 0) ins(); });
-    bar.append(b);
+  // ふつうのキーボードで打ったときも、カッコを自動で閉じる
+  ta.addEventListener('beforeinput', (e) => {
+    if (e.inputType === 'insertText' && e.data && e.data.length === 1) { if (typeChar(ta, e.data, kind)) e.preventDefault(); }
+    else if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') { e.preventDefault(); newLine(ta); keepCaretVisible(ta); }
+    else if (e.inputType === 'deleteContentBackward') { if (backDelete(ta)) e.preventDefault(); }
   });
-  return bar;
+  const remember = () => { ta._sel = [ta.selectionStart, ta.selectionEnd]; };
+  ['keyup','click','select','input'].forEach(ev => ta.addEventListener(ev, remember));
+  ta.addEventListener('focus', () => kbShow(ta, kind));
+  ta.addEventListener('blur', () => { remember(); kbHideSoon(); });
+  // 自動でのびる
+  requestAnimationFrame(() => { ta.dataset.min = String(ta.offsetHeight || 160); autoGrow(ta); });
+  ta.addEventListener('input', () => { autoGrow(ta); if (TOUCH && document.activeElement === ta) keepCaretVisible(ta); });
+  return null;
 }
 function editorKeys(ta, run){
   ta.addEventListener('keydown', (e) => {
@@ -344,14 +593,28 @@ function renderTokens(list, ctx){
   return out;
 }
 function hlPre(code, kind, cls){ return h('pre', { class: (cls || 'code') + ' hlc', html: hlText(code, kind) }); }
+function guides(html){
+  return html.split('\n').map(l => l.replace(/^( +)/, (sp) => {
+    let o = ''; for (let i = 0; i < sp.length; i += 2) o += '<span class="ig">' + sp.slice(i, i+2) + '</span>'; return o;
+  })).join('\n');
+}
 function wrapHL(ta, kind){
   const pre = h('pre', { class:'hl-under', 'aria-hidden':'true' });
-  const wrap = h('div', { class:'hl-wrap' }, pre, ta);
+  const gut = h('div', { class:'gutter', 'aria-hidden':'true' });
+  const wrap = h('div', { class:'hl-wrap' }, gut, pre, ta);
   ta.classList.add('hl-ta');
-  const paint = () => { let v = ta.value; if (v.endsWith('\n') || v === '') v += ' '; pre.innerHTML = hlText(v, kind); pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; };
-  ta.addEventListener('input', paint);
-  ta.addEventListener('scroll', () => { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; });
-  if (window.ResizeObserver) new ResizeObserver(() => { pre.style.height = ta.offsetHeight + 'px'; }).observe(ta);
+  let mark = 0, lastN = 0;
+  const nums = () => {
+    const n = ta.value.split('\n').length;
+    if (n === lastN && !gut.dataset.dirty) return; lastN = n; gut.dataset.dirty = '';
+    let o = ''; for (let i = 1; i <= n; i++) o += '<span' + (i === mark ? ' class="bad"' : '') + '>' + i + '</span>';
+    gut.innerHTML = o; gut.scrollTop = ta.scrollTop;
+  };
+  const paint = () => { let v = ta.value; if (v.endsWith('\n') || v === '') v += ' '; pre.innerHTML = guides(hlText(v, kind)); pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; nums(); };
+  ta.addEventListener('input', () => { if (mark) { mark = 0; gut.dataset.dirty = '1'; } paint(); });
+  ta.addEventListener('scroll', () => { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; gut.scrollTop = ta.scrollTop; });
+  if (window.ResizeObserver) new ResizeObserver(() => { pre.style.height = ta.offsetHeight + 'px'; gut.style.height = ta.offsetHeight + 'px'; }).observe(ta);
+  ta.markLine = (n) => { mark = n || 0; gut.dataset.dirty = '1'; nums(); };
   paint();
   return wrap;
 }
@@ -474,6 +737,7 @@ function renderTask(v){
       const res = await E.runJS(ta.value, paint);
       paint(res.lines);
       if (res.error) out.append(errBox(res.error));
+      if (ta.markLine) ta.markLine(res.error && res.error.line);
       if (res.note) out.append(h('div', { class:'none', style:'font-family:var(--f-ui);font-size:13px', text: res.note }));
       const j = E.judgeJS(st, ta.value, res);
       result = Object.assign({}, j, { error: res.error });
@@ -513,6 +777,7 @@ function renderTask(v){
     const type = r.error ? (r.error.name + ': ' + r.error.msg.replace(/'[^']*'/g, "'…'").replace(/^\S+ is not defined/, '… is not defined').replace(/^\S+ is not a function/, '… is not a function'))
                : r.kind === 'output' ? '表示がお題とちがう' : r.kind === 'must' ? '使う書き方がちがう' : 'HTML/CSS のチェック';
     S.miss[type] = (S.miss[type] || 0) + 1; save();
+    buddySay(r.error ? pick(['＼エラーにゃ…／','＼英語のとこ見てみるにゃ／','＼'+ (r.error.line ? r.error.line + '行目にゃ' : 'もう1回にゃ') +'／']) : pick(SAY.ng), 'shake');
     let msg = '';
     if (r.kind === 'output') msg = (r.line+1) + '行目がちがいます';
     else if (r.kind === 'must') msg = r.ja;
@@ -560,6 +825,7 @@ function renderTask(v){
     updateMisses();
     if (s.mode !== 'review' && !s.answer && s.miss >= 1 && s.miss <= 2 && !S.review[key]) askReview(key, s.miss);
     if (reward) toast('かつおぶし +' + reward);
+    buddySay(reward ? '＼正解にゃ！かつおぶし+' + reward + '／' : '＼正解にゃ！／', 'hop');
   }
 }
 function addReview(key, reason, miss, answer){
@@ -600,6 +866,7 @@ function renderFree(v){
       const paint = arr => { lines.innerHTML = ''; if (!arr.length) lines.append(h('div', { class:'none', text:'（何も表示されませんでした）' })); arr.forEach(x => lines.append(h('div', { class:'ln', text: x === '' ? ' ' : x }))); };
       paint([]);
       const res = await E.runJS(ta.value, paint); paint(res.lines);
+      if (ta.markLine) ta.markLine(res.error && res.error.line);
       if (res.error) {
         const ja = h('div', { class:'ja', text: res.error.ja, hidden:true });
         const b = h('button', { type:'button', onclick: () => { ja.hidden = !ja.hidden; b.textContent = ja.hidden ? '日本語にする' : '英語だけにする'; } }, '日本語にする');
@@ -707,7 +974,7 @@ function renderShop(v){
     const pic = h('div', { class:'pic' }, catCanvas(c.id, 'sit', 3));
     let btn;
     if (partner) btn = h('span', { class:'chip y', text:'いまの相棒' });
-    else if (own) btn = h('button', { class:'btn', type:'button', onclick: () => { S.cats.partner = c.id; save(); toast(catName(c.id) + 'が相棒になりました'); go('shop'); } }, '相棒にする');
+    else if (own) btn = h('button', { class:'btn', type:'button', onclick: () => { S.cats.partner = c.id; save(); buddyRender(); buddySay('＼よろしくにゃ／', 'hop'); toast(catName(c.id) + 'が相棒になりました'); go('shop'); } }, '相棒にする');
     else btn = h('button', { class:'btn', type:'button', disabled: S.katsuo < c.price || null, onclick: () => buyCat(c) }, 'かつおぶし ' + c.price);
     grid.append(h('div', { class:'catc' + (partner ? ' partner' : '') + (own ? '' : ' locked') },
       pic,
@@ -727,7 +994,60 @@ function renderShop(v){
         h('button', { type:'button', 'aria-label':'ふやす', onclick: () => { S.goal = Math.min(20, S.goal+1); save(); goalNum.textContent = S.goal + '問'; } }, '＋'))),
     h('div', { class:'setting' }, h('div', null, h('div', { text:'データを書き出す' }), h('div', { class:'sub', text:'機種変更やPCに移すとき用' })), h('button', { class:'btn small', type:'button', onclick: exportData }, '書き出す')),
     h('div', { class:'setting' }, h('div', null, h('div', { text:'データを読み込む' }), h('div', { class:'sub', text:'書き出したデータで上書きします' })), h('button', { class:'btn small', type:'button', onclick: importData }, '読み込む')),
-    h('div', { class:'setting' }, h('div', { class:'sub', text:'記録はこの端末の中にだけ保存されます。' }))));
+    accountRow()));
+}
+const AUTH_JA = {
+  'auth/invalid-email':'メールアドレスの形がちがいます。',
+  'auth/user-not-found':'そのメールアドレスのアカウントがありません。',
+  'auth/wrong-password':'パスワードがちがいます。',
+  'auth/invalid-credential':'メールアドレスかパスワードがちがいます。',
+  'auth/invalid-login-credentials':'メールアドレスかパスワードがちがいます。',
+  'auth/email-already-in-use':'そのメールアドレスはもう使われています。「ログイン」から入ってください。',
+  'auth/weak-password':'パスワードは6文字以上にしてください。',
+  'auth/missing-password':'パスワードを入れてください。',
+  'auth/network-request-failed':'ネットにつながっていないみたいです。',
+  'auth/too-many-requests':'何回も失敗したので、少し時間をおいてからためしてください。'
+};
+function accountRow(){
+  if (!window.NekoCloud) return h('div', { class:'setting' }, h('div', { class:'sub', text:'ログイン機能を読み込み中…' }));
+  if (!cloudOn()) return h('div', { class:'setting' }, h('div', null, h('div', { text:'ログインと同期' }),
+    h('div', { class:'sub', text: window.NekoCloud.reason === 'config' ? 'まだ準備中です（Firebase の設定が必要）。記録はこの端末の中にだけ保存されます。' : 'ネットにつながっていないので、いまはログインできません。' })));
+  if (cloudUser) return h('div', { class:'setting' },
+    h('div', null, h('div', { text:'ログイン中' }), h('div', { class:'sub', text: cloudUser.email + '（ほかの端末と同期しています）' })),
+    h('button', { class:'btn small', type:'button', onclick: () => {
+      openSheet(h('div', { class:'h', text:'ログアウトしますか？' }), h('p', { class:'sub', text:'この端末の記録は残ります。もう一度ログインすれば、また同期されます。' }),
+        h('div', { class:'btns' }, h('button', { class:'btn', type:'button', onclick: closeSheet }, 'やめる'),
+          h('button', { class:'btn primary', type:'button', onclick: async () => { await window.NekoCloud.signOut(); closeSheet(); toast('ログアウトしました'); } }, 'ログアウト')));
+    } }, 'ログアウト'));
+  return h('div', { class:'setting' },
+    h('div', null, h('div', { text:'ログインして同期' }), h('div', { class:'sub', text:'スマホと PC で、かつおぶし・記録・ねこが同じになります。' })),
+    h('button', { class:'btn small primary', type:'button', onclick: loginSheet }, 'ログイン'));
+}
+function loginSheet(mode){
+  mode = mode === 'signup' ? 'signup' : 'login';
+  const em = h('input', { type:'email', id:'loginEmail', autocomplete:'email', placeholder:'メールアドレス', 'aria-label':'メールアドレス', style:'width:100%;border:2px solid var(--ink);border-radius:10px;padding:10px 12px;font-size:16px' });
+  const pw = h('input', { type:'password', id:'loginPw', autocomplete: mode === 'signup' ? 'new-password' : 'current-password', placeholder:'パスワード（6文字以上）', 'aria-label':'パスワード', style:'width:100%;border:2px solid var(--ink);border-radius:10px;padding:10px 12px;font-size:16px' });
+  const msg = h('p', { class:'sub', style:'color:var(--ng)', hidden:true });
+  const go1 = h('button', { class:'btn primary wide', type:'button', onclick: async () => {
+    msg.hidden = true; go1.disabled = true;
+    try {
+      if (mode === 'signup') await window.NekoCloud.signUp(em.value.trim(), pw.value);
+      else await window.NekoCloud.signIn(em.value.trim(), pw.value);
+      closeSheet(); toast(mode === 'signup' ? 'アカウントを作りました' : 'ログインしました');
+      buddySay('＼おかえりにゃ／', 'hop');
+    } catch(e) { msg.textContent = AUTH_JA[e.code] || ('うまくいきませんでした（' + (e.code || e.message) + '）'); msg.hidden = false; }
+    go1.disabled = false;
+  } }, mode === 'signup' ? 'アカウントを作る' : 'ログイン');
+  openSheet(h('div', { class:'h', text: mode === 'signup' ? 'アカウントを作る' : 'ログイン' }),
+    h('p', { class:'sub', text: mode === 'signup' ? 'ほかで使っているパスワードとは、ちがうものにしてください。' : 'スマホと PC で同じアカウントに入ると、記録がそろいます。' }),
+    em, pw, msg, go1,
+    h('div', { class:'btns' },
+      h('button', { class:'btn small', type:'button', onclick: () => loginSheet(mode === 'signup' ? 'login' : 'signup') }, mode === 'signup' ? 'ログインにもどる' : '新しく作る'),
+      h('button', { class:'btn small', type:'button', onclick: async () => {
+        if (!em.value.trim()) { msg.textContent = '先にメールアドレスを入れてください。'; msg.hidden = false; return; }
+        try { await window.NekoCloud.reset(em.value.trim()); toast('パスワードの再設定メールを送りました'); } catch(e) { msg.textContent = AUTH_JA[e.code] || 'メールを送れませんでした。'; msg.hidden = false; }
+      } }, 'パスワードを忘れた')));
+  setTimeout(() => em.focus(), 50);
 }
 function buyCat(c){
   openSheet(h('div', { class:'pic', style:'display:grid;place-items:center' }, catCanvas(c.id, 'sit', 6)),
@@ -777,7 +1097,7 @@ function importData(){
         try {
           const d = JSON.parse(ta.value);
           if (!d || d.v !== 1 || !d.cats) throw new Error('bad');
-          S = Object.assign(fresh(), d); save(); setKatsuo(S.katsuo); closeSheet(); toast('読み込みました'); go('home');
+          S = Object.assign(fresh(), d); save(); setKatsuo(S.katsuo); buddyRender(); closeSheet(); toast('読み込みました'); go('home');
         } catch(e) { toast('読み込めませんでした。データ全部を貼り付けたか確認してね'); }
       } }, '読み込む')));
 }
@@ -798,6 +1118,7 @@ window.addEventListener('pagehide', save);
 
 /* ---------- はじめる ---------- */
 setKatsuo(S.katsuo);
+buddyRender();
 go('home');
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
