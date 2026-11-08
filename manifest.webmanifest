@@ -1,0 +1,16 @@
+{
+  "name": "ねこコード",
+  "short_name": "ねこコード",
+  "description": "ねこと一緒に、HTML・CSS・JavaScript を毎日すこしずつ練習するアプリ",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#e6f1f3",
+  "theme_color": "#e6f1f3",
+  "lang": "ja",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

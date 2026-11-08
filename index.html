@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1">
+  <title>ねこコード</title>
+  <meta name="description" content="ねこと一緒に、HTML・CSS・JavaScript を毎日すこしずつ練習するアプリ">
+  <meta name="theme-color" content="#e6f1f3">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="ねこコード">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&family=BIZ+UDGothic:wght@400;700&display=swap">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div class="brand"><span class="brand-en">NEKO CODE</span><span class="brand-ja">ねこコード</span></div>
+      <button class="katsuo-chip" id="katsuoChip" type="button" aria-label="かつおぶし">
+        <span class="katsuo-ico" aria-hidden="true"></span><b id="katsuoNum">0</b>
+      </button>
+    </header>
+
+    <main id="view" class="view" tabindex="-1"></main>
+
+    <nav class="tabbar" id="tabbar" aria-label="メニュー">
+      <button type="button" data-tab="home"><span class="ti ti-home"></span><span>ホーム</span></button>
+      <button type="button" data-tab="practice"><span class="ti ti-pen"></span><span>練習</span></button>
+      <button type="button" data-tab="free"><span class="ti ti-play"></span><span>自由</span></button>
+      <button type="button" data-tab="record"><span class="ti ti-cal"></span><span>記録</span></button>
+      <button type="button" data-tab="shop"><span class="ti ti-cat"></span><span>ねこ屋さん</span></button>
+    </nav>
+  </div>
+
+  <div class="sheet-back" id="sheetBack" hidden></div>
+  <section class="sheet" id="sheet" hidden aria-modal="true" role="dialog"></section>
+  <div class="toast" id="toast" hidden></div>
+
+  <script>window.Prism = { manual: true };</script>
+  <script src="vendor/prism.js"></script>
+  <script src="vendor/acorn.js"></script>
+  <script src="js/cats.js"></script>
+  <script src="js/problems.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
