@@ -344,7 +344,9 @@ function putText(ta, text){
   ta.dispatchEvent(new Event('input'));
 }
 /* ( を打ったら ) も、などの自動入力 */
+const SMART = { '\u2019':"'", '\u2018':"'", '\u201C':'"', '\u201D':'"', '\uFF07':"'", '\uFF02':'"' };
 function typeChar(ta, ch, kind){
+  if (SMART[ch]) ch = SMART[ch];
   const v = ta.value, s = ta.selectionStart, e = ta.selectionEnd, next = v[s] || '';
   const pairOK = kind !== 'html' || ch === '"' || ch === "'";
   if (s === e && CLOSERS[ch] && next === ch) { ta.setSelectionRange(s+1, s+1); ta.dispatchEvent(new Event('input')); return true; }
@@ -456,6 +458,7 @@ function kbBuild(){
   const more = tapButton(KB.open ? '▼' : '▲', () => { KB.open = !KB.open; kbBuild(); kbPlace(); }, 'more', KB.open ? 'たたむ' : 'もっと見る');
   const wrap = h('div', { class:'kb-top' }, h('div', { class:'kb-scroll' }, row), more);
   el.append(wrap);
+  if (KB.suggest && KB.suggest.length) setTimeout(() => kbSuggest(KB.suggest), 0);
   if (KB.open) {
     const tabs = h('div', { class:'kb-tabs' },
       tapButton('記号', () => { KB.mode = 'sym'; kbBuild(); kbPlace(); }, KB.mode === 'sym' ? 'on' : ''),
@@ -506,11 +509,131 @@ function autoGrow(ta){
   ta.style.height = Math.max(min, ta.scrollHeight + 4) + 'px';
 }
 
+
+/* ---- 予測変換（VS Code の候補みたいなもの） ---- */
+const AC_WORDS = {
+  js: ['const','let','var','function','return','if','else','for','while','do','break','continue','switch','case','default','true','false','null','undefined','new','typeof','class','this','try','catch','finally','of','in',
+       'console','document','Math','window','JSON','Date','Number','String','Array','Object','parseInt','parseFloat','isNaN','setInterval','setTimeout','clearInterval','clearTimeout','alert','confirm','prompt'],
+  member: ['log','error','warn','length','push','pop','shift','unshift','slice','splice','indexOf','includes','join','split','map','filter','forEach','reduce','find','sort','reverse','toFixed','toString','toUpperCase','toLowerCase','trim','replace',
+       'round','floor','ceil','random','max','min','abs','sqrt','pow','now','getTime','getFullYear','getMonth','getDate','getHours','getMinutes','getSeconds','keys','values','stringify','parse',
+       'getElementById','querySelector','querySelectorAll','createElement','appendChild','append','remove','innerText','textContent','innerHTML','setAttribute','getAttribute','addEventListener','removeEventListener','classList','add','toggle','contains','style','value','body','focus','click'],
+  html: ['h1','h2','h3','h4','p','ul','ol','li','a','img','div','span','button','input','br','hr','table','tr','th','td','form','label','section','header','footer','main','nav','strong','em','script','link','style'],
+  attr: ['href','src','alt','class','id','type','placeholder','width','height','value','name','style','title','target','rel'],
+  css: ['color','background-color','background','font-size','font-weight','font-family','padding','padding-top','padding-left','margin','margin-top','margin-left','border','border-radius','border-color','width','height','max-width','text-align','display','flex','justify-content','align-items','gap','line-height','letter-spacing','opacity','position','top','left','right','bottom','box-shadow','cursor','transition','transform'],
+  cssval: ['red','blue','green','black','white','gray','pink','yellow','orange','purple','transparent','none','solid','dashed','dotted','bold','normal','center','left','right','block','inline-block','flex','grid','auto','absolute','relative','fixed','pointer','px','em','rem','%']
+};
+function acSource(ta, kind){
+  const v = ta.value, p = ta.selectionStart;
+  if (p !== ta.selectionEnd) return null;
+  const before = v.slice(0, p);
+  const lineStart = before.lastIndexOf('\n') + 1, line = before.slice(lineStart);
+  const wordRe = kind === 'css' ? /[A-Za-z-][\w-]*$/ : /[A-Za-z_$][\w$]*$/;
+  const m = line.match(wordRe);
+  if (!m) return null;
+  const prefix = m[0], start = p - prefix.length;
+  const prevCh = v[start - 1] || '';
+  // 文字列やコメントの中では出さない
+  const head = line.slice(0, line.length - prefix.length);
+  if (kind === 'js' && (/\/\//.test(head) || ((head.match(/'/g) || []).length % 2) || ((head.match(/"/g) || []).length % 2) || ((head.match(/`/g) || []).length % 2))) return null;
+  let pool = [];
+  if (kind === 'js') {
+    const names = new Set();
+    let r; const re1 = /\b(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)/g; while ((r = re1.exec(v))) names.add(r[1]);
+    const re2 = /function\s*[\w$]*\s*\(([^)]*)\)/g; while ((r = re2.exec(v))) r[1].split(',').forEach(x => { x = x.trim(); if (/^[A-Za-z_$][\w$]*$/.test(x)) names.add(x); });
+    if (prevCh === '.') {
+      const keys = new Set(); const re3 = /([A-Za-z_$][\w$]*)\s*:/g; while ((r = re3.exec(v))) keys.add(r[1]);
+      pool = [...keys].map(w => ({ w, k:'prop' })).concat(AC_WORDS.member.map(w => ({ w, k:'member' })));
+    } else {
+      pool = [...names].map(w => ({ w, k:'mine' })).concat(AC_WORDS.js.map(w => ({ w, k:'word' })));
+    }
+  } else if (kind === 'html') {
+    const inTag = /<[^>]*$/.test(line);
+    if (!inTag) return null;
+    pool = (/<\/?[A-Za-z0-9]*$/.test(line) ? AC_WORDS.html : AC_WORDS.attr).map(w => ({ w, k:'word' }));
+  } else {
+    const inValue = /:[^;{}]*$/.test(line);
+    pool = (inValue ? AC_WORDS.cssval : AC_WORDS.css).map(w => ({ w, k:'word' }));
+  }
+  const seen = new Set(); const lower = prefix.toLowerCase();
+  const list = pool.filter(o => { if (seen.has(o.w)) return false; seen.add(o.w); return o.w.toLowerCase().startsWith(lower) && o.w !== prefix; });
+  const rank = { mine:0, prop:0, word:1, member:1 };
+  list.sort((a, b) => (rank[a.k] - rank[b.k]) || a.w.localeCompare(b.w));
+  return list.length ? { prefix, start, list: list.slice(0, 8) } : null;
+}
+const AC = { ta:null, data:null, sel:0, box:null };
+function acAccept(ta, word){
+  const d = AC.data; if (!d) return;
+  const p = ta.selectionStart;
+  ta.setRangeText(word, d.start, p, 'end');
+  acClose();
+  ta.dispatchEvent(new Event('input'));
+  ta._sel = [ta.selectionStart, ta.selectionEnd];
+}
+function acClose(){ AC.data = null; if (AC.box) AC.box.hidden = true; kbSuggest(null); }
+function caretXY(ta){
+  const v = ta.value.slice(0, ta.selectionStart);
+  const lines = v.split('\n'), line = lines.length - 1, col = lines[line];
+  const cs = getComputedStyle(ta);
+  const c = caretXY.c || (caretXY.c = document.createElement('canvas').getContext('2d'));
+  c.font = cs.fontSize + ' ' + cs.fontFamily;
+  const lh = parseFloat(cs.lineHeight) || 27;
+  return { x: parseFloat(cs.paddingLeft) + c.measureText(col).width - ta.scrollLeft, y: parseFloat(cs.paddingTop) + (line + 1) * lh - ta.scrollTop };
+}
+function acUpdate(ta, kind){
+  const d = acSource(ta, kind);
+  AC.ta = ta; AC.data = d; AC.sel = 0;
+  if (!d) { acClose(); return; }
+  if (TOUCH) { kbSuggest(d.list.map(o => o.w)); return; }
+  const wrap = ta.closest('.hl-wrap'); if (!wrap) return;
+  if (!AC.box || AC.box.parentNode !== wrap) { if (AC.box) AC.box.remove(); AC.box = h('div', { class:'ac', role:'listbox' }); wrap.append(AC.box); }
+  acPaint();
+  const xy = caretXY(ta);
+  AC.box.style.left = Math.min(xy.x, wrap.clientWidth - 200) + 'px';
+  AC.box.style.top = (xy.y + 2) + 'px';
+  AC.box.hidden = false;
+}
+function acPaint(){
+  const d = AC.data, box = AC.box; if (!d || !box) return;
+  box.innerHTML = '';
+  d.list.forEach((o, i) => {
+    const it = h('div', { class:'ac-it' + (i === AC.sel ? ' on' : ''), role:'option' },
+      h('span', { class:'ac-ico ' + o.k, text: o.k === 'mine' ? '箱' : o.k === 'prop' || o.k === 'member' ? '.' : '語' }),
+      h('b', { text: o.w.slice(0, d.prefix.length) }), o.w.slice(d.prefix.length));
+    it.addEventListener('mousedown', (e) => { e.preventDefault(); acAccept(AC.ta, o.w); });
+    box.append(it);
+  });
+}
+function acKeys(ta, e){
+  if (!AC.data || AC.ta !== ta || TOUCH || !AC.box || AC.box.hidden) return false;
+  const n = AC.data.list.length;
+  if (e.key === 'ArrowDown') { AC.sel = (AC.sel + 1) % n; acPaint(); return true; }
+  if (e.key === 'ArrowUp') { AC.sel = (AC.sel - 1 + n) % n; acPaint(); return true; }
+  if (e.key === 'Enter' || e.key === 'Tab') { acAccept(ta, AC.data.list[AC.sel].w); return true; }
+  if (e.key === 'Escape') { acClose(); return true; }
+  return false;
+}
+function kbSuggest(words){
+  KB.suggest = words;
+  const el = KB.el; if (!el) return;
+  let strip = el.querySelector('.kb-sug');
+  if (!words || !words.length) { if (strip) strip.hidden = true; kbPlace(); return; }
+  if (!strip) { strip = h('div', { class:'kb-sug' }); el.prepend(strip); }
+  strip.hidden = false; strip.innerHTML = '';
+  words.forEach(w => strip.append(tapButton(w, () => { const ta = KB.ta; if (!ta) return; if (document.activeElement !== ta) { const s = ta._sel || [ta.selectionStart, ta.selectionEnd]; ta.focus({ preventScroll:true }); ta.setSelectionRange(s[0], s[1]); } acAccept(ta, w); keepCaretVisible(ta); }, 'sug')));
+  kbPlace();
+}
+
 function keyBar(ta, kind){
   // ふつうのキーボードで打ったときも、カッコを自動で閉じる
   ta.addEventListener('beforeinput', (e) => {
-    if (e.inputType === 'insertText' && e.data && e.data.length === 1) { if (typeChar(ta, e.data, kind)) e.preventDefault(); }
-    else if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') { e.preventDefault(); newLine(ta); keepCaretVisible(ta); }
+    if (e.inputType === 'insertText' && e.data && e.data.length === 1) { if (typeChar(ta, e.data, kind)) e.preventDefault(); else if (SMART[e.data]) { e.preventDefault(); putText(ta, SMART[e.data]); } }
+    else if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+      e.preventDefault();
+      // 候補が出ているときは、改行のかわりに1番上の候補を入れる
+      if (AC.data && AC.ta === ta && AC.data.list.length) acAccept(ta, AC.data.list[AC.sel].w);
+      else newLine(ta);
+      keepCaretVisible(ta);
+    }
     else if (e.inputType === 'deleteContentBackward') { if (backDelete(ta)) e.preventDefault(); }
   });
   const remember = () => { ta._sel = [ta.selectionStart, ta.selectionEnd]; };
@@ -519,7 +642,10 @@ function keyBar(ta, kind){
   ta.addEventListener('blur', () => { remember(); kbHideSoon(); });
   // 自動でのびる
   requestAnimationFrame(() => { ta.dataset.min = String(ta.offsetHeight || 160); autoGrow(ta); });
-  ta.addEventListener('input', () => { autoGrow(ta); if (TOUCH && document.activeElement === ta) keepCaretVisible(ta); });
+  ta.addEventListener('input', () => { autoGrow(ta); if (TOUCH && document.activeElement === ta) keepCaretVisible(ta); acUpdate(ta, kind); });
+  ta.addEventListener('keydown', (e) => { if (acKeys(ta, e)) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
+  ta.addEventListener('click', () => acClose());
+  ta.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== ta && !TOUCH) acClose(); }, 150));
   return null;
 }
 function editorKeys(ta, run){
@@ -533,7 +659,9 @@ function hlText(code, kind){
   const P = window.Prism, grammar = P && P.languages[LANG[kind] || 'javascript'];
   if (!grammar) return E.esc(code);
   try {
-    const ctx = { depth:0, afterConst:false, afterDot:false, js: kind === 'js', css: kind === 'css' };
+    const consts = new Set();
+    if (kind === 'js') { const re = /\bconst\s+([A-Za-z_$][\w$]*)/g; let m; while ((m = re.exec(code))) consts.add(m[1]); }
+    const ctx = { depth:0, afterConst:false, afterDot:false, js: kind === 'js', css: kind === 'css', consts };
     return renderTokens(P.tokenize(code, grammar), ctx);
   } catch(e) { return E.esc(code); }
 }
@@ -547,22 +675,23 @@ function cssValues(s){
     return E.esc(all);
   });
 }
+const BUILTIN_BLUE = new Set(['console','document','Math','window','JSON','Date','Number','String','Array','Object']);
 function plainText(s, ctx){
-  let out = '';
   if (ctx.css) return cssValues(s);
-  if (ctx.js) {
-    if (ctx.afterConst) {
-      const m = s.match(/^(\s*)([A-Za-z_$][\w$]*)/);
-      if (m) { out += E.esc(m[1]) + '<span class="token const-name">' + E.esc(m[2]) + '</span>'; s = s.slice(m[0].length); ctx.afterConst = false; }
-      else if (s.trim()) ctx.afterConst = false;
+  if (!ctx.js) return E.esc(s);
+  let out = '';
+  s.replace(/([A-Za-z_$][\w$]*)|(\s+)|([^A-Za-z_$\s]+)/g, (all, id, sp, other) => {
+    if (sp) { out += sp; return; }
+    if (id) {
+      let cls = null;
+      if (ctx.afterDot) cls = 'prop';
+      else if (ctx.afterConst || ctx.consts.has(id) || BUILTIN_BLUE.has(id)) cls = 'const-name';
+      out += cls ? '<span class="token ' + cls + '">' + E.esc(id) + '</span>' : E.esc(id);
+      ctx.afterConst = false; ctx.afterDot = false; return;
     }
-    if (ctx.afterDot) {
-      const m = s.match(/^([A-Za-z_$][\w$]*)/);
-      if (m) { out += '<span class="token prop">' + E.esc(m[1]) + '</span>'; s = s.slice(m[0].length); }
-      ctx.afterDot = false;
-    }
-  }
-  return out + E.esc(s);
+    out += E.esc(other); ctx.afterConst = false; ctx.afterDot = false;
+  });
+  return out;
 }
 function renderTokens(list, ctx){
   let out = '';
