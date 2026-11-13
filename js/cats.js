@@ -176,7 +176,11 @@
         ctx.fillRect(dx*scale, y*scale, scale, scale);
       }
     }
-    if (cat.ribbon) { ctx.fillStyle = cat.ribbon; const rx = flip ? w-1-21 : 21; ctx.fillRect(rx*scale, 1*scale, scale, scale); ctx.fillRect((flip?rx-1:rx+1)*scale, 2*scale, scale, scale); }
+    if (cat.ribbon && !(cat.wear && cat.wear.head)) { ctx.fillStyle = cat.ribbon; const rx = flip ? w-1-21 : 21; ctx.fillRect(rx*scale, 1*scale, scale, scale); ctx.fillRect((flip?rx-1:rx+1)*scale, 2*scale, scale, scale); }
+    if (cat.wear) Object.values(cat.wear).forEach(id => { const it = WEAR[id]; if (!it) return;
+      it.rows.forEach((row, yy) => { for (let xx = 0; xx < row.length; xx++) { const c = it.col[row[xx]]; if (!c) continue;
+        const x = it.x + xx, y = it.y + yy; ctx.fillStyle = c; ctx.fillRect((flip ? w-1-x : x)*scale, y*scale, scale, scale); } });
+    });
     return canvas;
   }
 
@@ -215,7 +219,47 @@
     {id:'hidamari',name:'ひだまりねこ',   price:60, body:'#ffd775', p1:'#f5ab45', pat:'tabby', belly:'#fff4cc', line:'#6a4a10', charm:'#ffffff', ribbon:'#ff8fa3'},
     {id:'niji',   name:'にじねこ',        price:80, body:'#ffffff', pat:'rainbow', belly:'#ffffff', line:L, charm:'#ffffff'}
   ];
+  // ガチャでしか出ないねこ
+  CATS.push(
+    {id:'mint',   name:'チョコミントねこ', price:35, gacha:true, body:'#bff0dc', shade:'#94dcc0', p1:'#5a3a2a', pat:'spots', belly:'#ffffff', line:'#2a4a3e', charm:'#f6c945'},
+    {id:'pudding',name:'プリンねこ',       price:35, gacha:true, body:'#ffe08a', shade:'#f5c95a', p1:'#7a4a1e', pat:'back', belly:'#fff6d6', line:'#5a3a10', charm:'#ff6f91'},
+    {id:'sakura', name:'さくらねこ',       price:55, gacha:true, body:'#ffd9e6', shade:'#f7b6cc', p1:'#ff8fb1', pat:'spots', belly:'#ffffff', line:'#7a3b52', charm:'#ffffff', ribbon:'#ff8fb1'},
+    {id:'kin',    name:'きんいろねこ',     price:60, gacha:true, body:'#ffd34d', shade:'#e6b422', belly:'#fff1b0', line:'#6b4f00', eye:'#6b4f00', charm:'#ffffff'},
+    {id:'uchu',   name:'うちゅうねこ',     price:70, gacha:true, body:'#4b2f7a', shade:'#3a2360', p1:'#ffffff', pat:'stars', belly:'#6a4a9e', line:'#1a0f30', eye:'#7fe0ff', mouth:'#b9a6e0', ear:'#a57ad8', charm:'#7fe0ff'}
+  );
   const RARITY = p => p >= 50 ? 'とってもレア' : p >= 30 ? 'レア' : p >= 15 ? 'ちょっとレア' : 'ふつう';
 
-  window.NekoCats = { CATS, POSES, drawCat, RARITY };
+  /* ---- 色ちがい（ガチャでたまに出る）：色をくるっと回す ---- */
+  function hueShift(hex, deg){
+    if (!/^#[0-9a-f]{6}$/i.test(hex || '')) return hex;
+    let r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
+    const mx = Math.max(r,g,b), mn = Math.min(r,g,b); let hh = 0, ss = 0; const ll = (mx+mn)/2;
+    if (mx !== mn) { const d = mx-mn; ss = ll > .5 ? d/(2-mx-mn) : d/(mx+mn);
+      hh = mx === r ? (g-b)/d + (g<b?6:0) : mx === g ? (b-r)/d + 2 : (r-g)/d + 4; hh /= 6; }
+    if (ss < 0.08) { ss = 0.45; }                    // 白や灰色のねこにも色をつける
+    hh = (hh + deg/360) % 1;
+    const f = (n) => { const k = (n + hh*12) % 12, a = ss*Math.min(ll,1-ll); const c = ll - a*Math.max(-1, Math.min(k-3, 9-k, 1)); return Math.round(c*255).toString(16).padStart(2,'0'); };
+    return '#' + f(0) + f(8) + f(4);
+  }
+  function shiny(cat){
+    const c = Object.assign({}, cat);
+    ['body','shade','belly','p1','p2','charm','ribbon','ear'].forEach(k => { if (c[k]) c[k] = hueShift(c[k], 150); });
+    if (c.pat === 'rainbow') c.body = '#fff6c9';
+    return c;
+  }
+
+  /* ---- きせかえ（相棒のレベルで増える） ---- */
+  const WEAR = {
+    ribbon:   { name:'リボン',       slot:'head',  lv:2,  x:22, y:0, rows:['rr.rr','rrkrr','rr.rr'], col:{ r:'#ff6f91', k:'#d94a70' } },
+    glasses:  { name:'まるめがね',   slot:'face',  lv:3,  x:15, y:5, rows:['kkkk.kkkk','k..kkk..k','kkkk.kkkk'], col:{ k:'#3a3f46' } },
+    scarf:    { name:'マフラー',     slot:'neck',  lv:4,  x:10, y:10, rows:['rwrwrwrwrwrwrw','rwrwrwrwrwrwrw','..rw','..rw','..wr'], col:{ r:'#e85a5a', w:'#fff3f3' } },
+    cheek:    { name:'ほっぺ',       slot:'cheek', lv:5,  x:13, y:8, rows:['pp.........pp'], col:{ p:'#f7a1b5' } },
+    bowtie:   { name:'ちょうネクタイ', slot:'neck', lv:6,  x:17, y:11, rows:['bb.bb','bbkbb','bb.bb'], col:{ b:'#4fa3e0', k:'#2a6a9e' } },
+    hachimaki:{ name:'はちまき',     slot:'head',  lv:7,  x:13, y:4, rows:['rrrrrrrrrrrrr','...........rr'], col:{ r:'#e85a5a' } },
+    sunglass: { name:'サングラス',   slot:'face',  lv:8,  x:15, y:5, rows:['kkkkkkkkk','kwkk.kwkk','.kk...kk.'], col:{ k:'#14181d', w:'#8b96a3' } },
+    cap:      { name:'ぼうし',       slot:'head',  lv:9,  x:15, y:0, rows:['..bbbb..','bbbbbbbb'], col:{ b:'#2f8f9d' } },
+    crown:    { name:'おうかん',     slot:'head',  lv:10, x:16, y:0, rows:['y.yy.y','yyryyy'], col:{ y:'#f6c945', r:'#e85a5a' } }
+  };
+
+  window.NekoCats = { CATS, POSES, drawCat, RARITY, shiny, WEAR };
 })();

@@ -3,7 +3,7 @@
    ========================================================= */
 (function(){
 'use strict';
-const { CATS, drawCat, RARITY } = window.NekoCats;
+const { CATS, drawCat, RARITY, shiny, WEAR } = window.NekoCats;
 const { ALL: PROBS } = window.NekoProblems;
 const E = window.NekoEngine;
 
@@ -33,8 +33,18 @@ const fmtDay = key => { const [y,m,d] = key.split('-').map(Number); const dt = n
 const fmtTime = sec => { const m = Math.floor(sec/60); return m < 60 ? m + '分' : Math.floor(m/60) + '時間' + (m%60 ? (m%60) + '分' : ''); };
 const pick = a => a[Math.floor(Math.random()*a.length)];
 
-const STAGE = ['穴埋め','見て書く','見ないで書く'];
-const REWARD = [1,2,3];
+/* 「見ないで書く」の前に、だんだん見本が消えていく3つの段階を入れる
+   穴埋め → 見て書く → 半分かくれる → 頭文字だけ → 手順だけ → 見ないで書く */
+PROBS.forEach(p => {
+  if (p._six) return; p._six = true;
+  const b = p.stages[2];
+  p.stages = [p.stages[0], p.stages[1],
+    Object.assign({}, b, { kind:'fade', fade:1 }), Object.assign({}, b, { kind:'fade', fade:2 }), Object.assign({}, b, { kind:'fade', fade:3 }), b];
+});
+const STAGE = ['穴埋め','見て書く','半分かくれる','頭文字だけ','手順だけ','見ないで書く'];
+const STAGE_S = ['穴埋め','見て','半分','頭文字','手順','見ないで'];
+const NST = STAGE.length, LAST = NST - 1;
+const REWARD = [1,2,1,1,1,3];
 const COURSE = { js:'JavaScript', html:'HTML', css:'CSS' };
 const PMAP = {}; PROBS.forEach(p => PMAP[p.id] = p);
 const KEY = (pid, si) => pid + ':' + si;
@@ -52,7 +62,27 @@ function fresh(){
 }
 let S;
 try { S = JSON.parse(localStorage.getItem(SAVE_KEY)) || fresh(); } catch(e) { S = fresh(); }
-S = Object.assign(fresh(), S);
+S = migrate(Object.assign(fresh(), S));
+/* 前の版（3段階）の記録を、6段階に引っこしする */
+function migrate(d){
+  if (!d.stg6) {
+    const mv = (k) => { const [pid, si] = k.split(':'); return si === '2' ? pid + ':5' : k; };
+    const remap = (o) => { const r = {}; Object.keys(o || {}).forEach(k => r[mv(k)] = o[k]); return r; };
+    d.prog = remap(d.prog); d.review = remap(d.review); d.drafts = remap(d.drafts);
+    Object.keys(d.prog).forEach(k => { const [pid, si] = k.split(':'); if (si === '5' && d.prog[k].cleared) [2,3,4].forEach(i => { if (!d.prog[pid + ':' + i]) d.prog[pid + ':' + i] = Object.assign({}, d.prog[k]); }); });
+    if (d.daily && d.daily.key) d.daily.key = mv(d.daily.key);
+    Object.values(d.days || {}).forEach(r => (r.items || []).forEach(it => { if (it.key) it.key = mv(it.key); }));
+    d.stg6 = 1;
+  }
+  d.stat = Object.assign({ clears:0, earned:0, blindClean:0, bestCombo:0, gacha:0 }, d.stat || {});
+  d.badges = d.badges || {};
+  d.walk = d.walk || {};
+  d.cats.shiny = d.cats.shiny || {};
+  Object.values(d.cats.owned).forEach(o => { if (o.lv == null) { o.lv = 1; o.exp = 0; o.wear = {}; } });
+  if (d.combo == null) d.combo = 0;
+  if (!d.life) d.life = { fedDate: addDays(today(), -1) };
+  return d;
+}
 function save(quiet){
   if (!quiet) S.updatedAt = Date.now();
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch(e){}
@@ -70,7 +100,7 @@ async function cloudPush(){
 function adopt(remote, uid){
   try {
     const d = JSON.parse(remote.data);
-    S = Object.assign(fresh(), d); S.syncUid = uid; S.updatedAt = remote.updatedAt;
+    S = migrate(Object.assign(fresh(), d)); S.syncUid = uid; S.updatedAt = remote.updatedAt;
     save(true); setKatsuo(S.katsuo); buddyRender();
     if (UI.screen !== 'task') go(UI.tab);
   } catch(e) {}
@@ -119,7 +149,13 @@ let toastT;
 function toast(msg){ const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(()=> t.hidden = true, 2400); }
 
 /* ---------- ねこ ---------- */
-const catDef = id => CATS.find(c => c.id === id) || CATS[0];
+const catBase = id => CATS.find(c => c.id === id) || CATS[0];
+function catDef(id){
+  let c = catBase(id); const o = S.cats.owned[id];
+  if (o && o.sv && S.cats.shiny[id]) c = shiny(c);
+  if (o && o.wear && Object.keys(o.wear).length) c = Object.assign({}, c, { wear: o.wear });
+  return c;
+}
 const catName = id => (S.cats.owned[id] && S.cats.owned[id].name) || catDef(id).name;
 function catCanvas(id, pose, scale){ const c = document.createElement('canvas'); drawCat(c, catDef(id), pose, scale); return c; }
 const SAY = {
@@ -133,14 +169,14 @@ const SAY = {
 
 /* ---------- 相棒ねこ（どの画面でも上にいる） ---------- */
 let buddyT;
-function buddyRender(){ const cv = $('#buddyCv'); if (cv) drawCat(cv, catDef(S.cats.partner), 'sit', 2); }
+function buddyRender(){ const cv = $('#buddyCv'); if (!cv) return; drawCat(cv, catDef(S.cats.partner), 'sit', 2); cv.style.visibility = (S.life && S.life.away) ? 'hidden' : ''; }
 function buddySay(text, mood){
   const b = $('#buddy'), say = $('#buddySay'); if (!b) return;
   say.textContent = text; say.hidden = false;
   b.classList.remove('hop','shake'); void b.offsetWidth; if (mood) b.classList.add(mood);
   clearTimeout(buddyT); buddyT = setTimeout(() => { say.hidden = true; b.classList.remove('hop','shake'); }, 2600);
 }
-$('#buddy').addEventListener('click', () => buddySay(pick(SAY.tap), 'hop'));
+$('#buddy').addEventListener('click', () => { if (S.life && S.life.away) { buddySay('＼（るす）／'); return; } const hg = hungerLabel(); buddySay(hg.lv >= 2 ? hg.say : pick(tapLines()), hg.lv >= 2 ? 'shake' : 'hop'); });
 /* ---------- 画面の切りかえ ---------- */
 const UI = { tab:'home', screen:'home', month:null, free:null };
 let session = null;
@@ -186,7 +222,8 @@ function renderHome(v){
     h('div', { class:'spread' },
       h('div', null, h('div', { class:'label', text:'TODAY' }), h('div', { class:'date', text: fmtDay(t) })),
       h('span', { class:'chip y', text: catName(partner) + 'と練習中' })
-    )
+    ),
+    titleName() ? h('div', { class:'title-line' }, h('span', { class:'ttl-chip', text:'称号　' + titleName() })) : null
   );
   const walk = h('div', { class:'walk' },
     h('div', { class:'label', text:'きょう といた問題' }),
@@ -212,6 +249,7 @@ function renderHome(v){
   );
   card.append(stats);
   v.append(card);
+  v.append(lifeCard());
 
   // 歩かせる
   function place(){
@@ -248,8 +286,9 @@ function renderHome(v){
 }
 function streak(){
   let n = 0, k = today();
-  if (!(S.days[k] && S.days[k].items.some(i=>i.ok))) k = addDays(k, -1);
-  while (S.days[k] && S.days[k].items.some(i => i.ok)) { n++; k = addDays(k, -1); }
+  const okDay = k => (S.days[k] && S.days[k].items.some(i => i.ok)) || (S.life && S.life.rest && S.life.rest[k]);
+  if (!okDay(k)) k = addDays(k, -1);
+  while (okDay(k)) { n++; k = addDays(k, -1); }
   return n;
 }
 
@@ -262,10 +301,12 @@ function renderPractice(v){
   const activeN = Object.values(S.review).filter(r => r.status === 'active').length;
   const seg = h('div', { class:'seg', role:'tablist' },
     h('button', { type:'button', class: mode==='course'?'on':'', onclick: () => { UI.pmode='course'; go('practice'); } }, 'コース'),
-    h('button', { type:'button', class: mode==='review'?'on':'', onclick: () => { UI.pmode='review'; go('practice'); } }, '復習', activeN ? h('span', { class:'badge', text: activeN }) : null)
+    h('button', { type:'button', class: mode==='review'?'on':'', onclick: () => { UI.pmode='review'; go('practice'); } }, '復習', activeN ? h('span', { class:'badge', text: activeN }) : null),
+    h('button', { type:'button', class: mode==='walk'?'on':'', onclick: () => { UI.pmode='walk'; go('practice'); } }, 'ねこ散歩')
   );
   v.append(seg);
   if (mode === 'review') return renderReview(v);
+  if (mode === 'walk') return renderWalkList(v);
 
   const course = S.ui.course || 'js';
   const cseg = h('div', { class:'seg' }, Object.keys(COURSE).map(c =>
@@ -276,11 +317,11 @@ function renderPractice(v){
   let lastUnit = null, box = null;
   list.forEach((p, idx) => {
     if (p.unit !== lastUnit) { lastUnit = p.unit; box = h('div', { class:'unit' }, h('div', { class:'unit-name', text: p.unit })); v.append(box); }
-    const done = [0,1,2].map(i => stageDone(p.id, i));
+    const done = p.stages.map((x, i) => stageDone(p.id, i));
     const next = done.indexOf(false);
-    const btn = h('button', { class:'prob', type:'button', onclick: () => openTask(p.id, next === -1 ? 2 : next, 'normal') },
-      h('div', { class:'pt' }, h('b', { text: p.title }), h('small', { text: next === -1 ? '3段階クリア' : 'つぎは「' + STAGE[next] + '」' })),
-      h('div', { class:'dots', 'aria-label': done.filter(Boolean).length + '/3' }, done.map((d,i) => h('i', { class: d ? 'on' + (i===2?' s3':'') : '' })))
+    const btn = h('button', { class:'prob', type:'button', onclick: () => openTask(p.id, next === -1 ? LAST : next, 'normal') },
+      h('div', { class:'pt' }, h('b', { text: p.title }), h('small', { text: next === -1 ? '全部の段階クリア' : 'つぎは「' + STAGE[next] + '」' })),
+      h('div', { class:'dots', 'aria-label': done.filter(Boolean).length + '/' + NST }, done.map((d,i) => h('i', { class: d ? 'on' + (i===LAST?' s3':'') : '' })))
     );
     box.append(btn);
   });
@@ -513,7 +554,7 @@ function autoGrow(ta){
 /* ---- 予測変換（VS Code の候補みたいなもの） ---- */
 const AC_WORDS = {
   js: ['const','let','var','function','return','if','else','for','while','do','break','continue','switch','case','default','true','false','null','undefined','new','typeof','class','this','try','catch','finally','of','in',
-       'console','document','Math','window','JSON','Date','Number','String','Array','Object','parseInt','parseFloat','isNaN','setInterval','setTimeout','clearInterval','clearTimeout','alert','confirm','prompt'],
+       'console','document','Math','window','JSON','Date','Number','String','Array','Object','parseInt','parseFloat','isNaN','setInterval','setTimeout','clearInterval','clearTimeout','alert','confirm','prompt','walk','jump','turnRight','turnLeft','eat','isFish','isRock'],
   member: ['log','error','warn','length','push','pop','shift','unshift','slice','splice','indexOf','includes','join','split','map','filter','forEach','reduce','find','sort','reverse','toFixed','toString','toUpperCase','toLowerCase','trim','replace',
        'round','floor','ceil','random','max','min','abs','sqrt','pow','now','getTime','getFullYear','getMonth','getDate','getHours','getMinutes','getSeconds','keys','values','stringify','parse',
        'getElementById','querySelector','querySelectorAll','createElement','appendChild','append','remove','innerText','textContent','innerHTML','setAttribute','getAttribute','addEventListener','removeEventListener','classList','add','toggle','contains','style','value','body','focus','click'],
@@ -751,6 +792,20 @@ function codeArea(value, ph){
   return h('textarea', { class:'code', spellcheck:'false', autocapitalize:'off', autocomplete:'off', autocorrect:'off', placeholder: ph || '', html: null }, value || '');
 }
 
+/* 見本をかくす：1 = 単語を1つおきにかくす / 2 = 頭文字だけ残す / 3 = 手順（そのまま） */
+function fadeText(code, level, kind){
+  if (level === 3) return code;
+  let n = 0;
+  const re = kind === 'css' ? /'[^'\n]*'|"[^"\n]*"|[A-Za-z_-][\w-]*|\d+(?:\.\d+)?/g : /'[^'\n]*'|"[^"\n]*"|`[^`\n]*`|[A-Za-z_$][\w$]*|\d+(?:\.\d+)?/g;
+  return code.replace(re, (w) => {
+    const q = /^['"`]/.test(w) ? w[0] : '';
+    const body = q ? w.slice(1, -1) : w;
+    if (!body) return w;
+    n++;
+    if (level === 1) return (n % 2 === 0) ? q + '_'.repeat(body.length) + q : w;
+    return q + body[0] + '_'.repeat(body.length - 1) + q;
+  });
+}
 function openTask(pid, si, mode, isDaily){
   leaveTask();
   const p = PMAP[pid];
@@ -777,10 +832,10 @@ function renderTask(v){
     h('div', { class:'tt' }, h('div', { class:'label', text: COURSE[kind] + ' ・ ' + p.unit }), h('b', { text: p.title })),
     s.mode === 'review' ? h('span', { class:'chip p', text:'復習' }) : s.daily ? h('span', { class:'chip y', text:'今日の1問' }) : null
   );
-  const stages = h('div', { class:'stages' }, [0,1,2].map(i => {
+  const stages = h('div', { class:'stages six' }, p.stages.map((x, i) => {
     const unlocked = i === 0 || stageDone(s.pid, i-1) || stageDone(s.pid, i) || s.mode === 'review';
     return h('button', { type:'button', class: (i === s.si ? 'on ' : '') + (stageDone(s.pid, i) ? 'clear' : ''), disabled: !unlocked || null,
-      onclick: () => { if (i !== s.si) openTask(s.pid, i, s.mode === 'review' ? 'normal' : s.mode, false); } }, STAGE[i]);
+      onclick: () => { if (i !== s.si) openTask(s.pid, i, s.mode === 'review' ? 'normal' : s.mode, false); } }, STAGE_S[i]);
   }));
   v.append(top, stages);
 
@@ -789,6 +844,9 @@ function renderTask(v){
     h('p', { class:'task-text', text: st.task }));
   if (st.kind !== 'blind') card.append(h('p', { class:'point', text: p.point }));
   if (st.kind === 'look') card.append(h('div', { class:'kata' }, h('div', { class:'label', text:'見本の型' }), hlPre(p.kata, kind)));
+  if (st.kind === 'fade') card.append(h('div', { class:'kata fade' },
+    h('div', { class:'label', text: st.fade === 1 ? '見本（半分かくれてる）' : st.fade === 2 ? '見本（頭文字だけ）' : '手順だけ（だいたい ' + st.answer.split('\n').length + '行）' }),
+    hlPre(fadeText(st.fade === 3 ? p.memo : st.answer, st.fade, kind), kind)));
   if (kind === 'css') card.append(h('details', { class:'fixed' }, h('summary', { text:'この HTML に CSS を当てます（タップで見る）' }), hlPre(st.html, 'html')));
   v.append(card);
 
@@ -903,6 +961,8 @@ function renderTask(v){
   }
   function failed(r){
     s.miss++;
+    if (S.combo >= 2) toast(S.combo + 'コンボで止まりました');
+    S.combo = 0;
     const type = r.error ? (r.error.name + ': ' + r.error.msg.replace(/'[^']*'/g, "'…'").replace(/^\S+ is not defined/, '… is not defined').replace(/^\S+ is not a function/, '… is not a function'))
                : r.kind === 'output' ? '表示がお題とちがう' : r.kind === 'must' ? '使う書き方がちがう' : 'HTML/CSS のチェック';
     S.miss[type] = (S.miss[type] || 0) + 1; save();
@@ -928,6 +988,18 @@ function renderTask(v){
       if (s.daily && !S.daily.done) reward += 2;
       if (s.mode === 'review') reward += 2;
     }
+    // コンボ（ミスなしで続けて正解）と、たまに大盛り
+    let combo = 0, comboBonus = 0, lucky = false;
+    if (!s.answer && s.miss === 0) { S.combo = (S.combo || 0) + 1; combo = S.combo; } else S.combo = 0;
+    S.stat.bestCombo = Math.max(S.stat.bestCombo, S.combo);
+    if (reward > 0) {
+      comboBonus = combo >= 10 ? 3 : combo >= 5 ? 2 : combo >= 3 ? 1 : 0;
+      reward += comboBonus;
+      if (Math.random() < 0.12) { lucky = true; reward *= 2; }
+    }
+    if (life().fedDate !== today() || life().away) feedToday();
+    if (first && !s.answer) { S.stat.clears++; if (s.si === LAST && s.miss === 0 && s.hint === 0) S.stat.blindClean++; gainExp(S.cats.partner, 1, true); }
+    S.stat.earned += reward;
     if (first) S.prog[key] = { cleared:true, clearedAt: today(), firstMiss: s.miss, firstAnswer: s.answer };
     if (s.daily && S.daily && S.daily.key === key) S.daily.done = true;
     dayRec().items.push({ key, miss: s.miss, answer: s.answer, ok:true, mode: s.mode, t: Date.now() });
@@ -945,8 +1017,10 @@ function renderTask(v){
     }
     save();
 
-    const nextBtn = s.si < 2 ? h('button', { class:'btn primary', type:'button', onclick: () => openTask(s.pid, s.si + 1, 'normal') }, 'つぎの段階へ') : null;
+    const nextBtn = s.si < LAST ? h('button', { class:'btn primary', type:'button', onclick: () => openTask(s.pid, s.si + 1, 'normal') }, 'つぎの段階へ') : null;
     outWrap.append(h('div', { class:'verdict ok' },
+      combo >= 2 ? h('div', { class:'combo', text: combo + ' COMBO' + (comboBonus ? '　ボーナス +' + comboBonus : '') }) : null,
+      lucky ? h('div', { class:'lucky', text:'大盛り！ かつおぶし 2ばい' }) : null,
       h('div', { class:'vb', text: '正解！' }),
       h('div', { class:'vd', text: (reward ? 'かつおぶし +' + reward + '　' : '') + (s.miss ? 'ミス ' + s.miss + '回' : 'ミスなし') }),
       note ? h('div', { class:'vd', text: note }) : null));
@@ -954,7 +1028,8 @@ function renderTask(v){
     updateMisses();
     if (s.mode !== 'review' && !s.answer && s.miss >= 1 && s.miss <= 2 && !S.review[key]) askReview(key, s.miss);
     if (reward) toast('かつおぶし +' + reward);
-    buddySay(reward ? '＼正解にゃ！かつおぶし+' + reward + '／' : '＼正解にゃ！／', 'hop');
+    buddySay(lucky ? '＼大盛りにゃ！！／' : combo >= 3 ? '＼' + combo + 'コンボにゃ！／' : reward ? '＼正解にゃ！かつおぶし+' + reward + '／' : '＼正解にゃ！／', 'hop');
+    setTimeout(checkBadges, 900);
   }
 }
 function addReview(key, reason, miss, answer){
@@ -1061,6 +1136,8 @@ function renderRecord(v){
       h('div', { class:'stat' }, h('b', { text: fmtTime(mSec) }), h('span', { text:'勉強時間' })),
       h('div', { class:'stat' }, h('b', { text: streak() + '日' }), h('span', { text:'いまの連続' })))));
 
+  renderBadges(v);
+
   // つまずきランキング（目立たない場所に）
   const rank = Object.entries(S.miss).sort((a,b) => b[1]-a[1]).slice(0,5);
   if (rank.length) v.append(h('details', { class:'card soft' },
@@ -1093,26 +1170,42 @@ function daySheet(k){
    ねこ屋さん ＋ 設定
    ========================================================= */
 function renderShop(v){
+  const tab = UI.shop || 'buddy';
+  v.append(h('div', { class:'seg' }, [['buddy','相棒'],['gacha','ガチャ'],['zukan','図鑑'],['set','設定']].map(([k, t]) =>
+    h('button', { type:'button', class: tab === k ? 'on' : '', onclick: () => { UI.shop = k; go('shop'); } }, t))));
+  if (tab === 'buddy') return renderBuddy(v);
+  if (tab === 'gacha') { renderGacha(v); return renderTools(v); }
+  if (tab === 'zukan') return renderZukan(v);
+  renderSettings(v);
+}
+function renderZukan(v){
   const ownedN = Object.keys(S.cats.owned).length;
   v.append(h('section', { class:'card' },
-    h('div', { class:'label', text:'CAT SHOP' }), h('div', { class:'h', text:'ねこ屋さん' }),
-    h('p', { class:'sub', text:'かつおぶしでねこを仲間にできます。仲間のねこには名前をつけられます。（' + ownedN + ' / ' + CATS.length + '匹）' })));
+    h('div', { class:'label', text:'CAT BOOK' }), h('div', { class:'h', text:'ねこ図鑑' }),
+    h('p', { class:'sub', text:'ガチャか かつおぶしで仲間にできます。名前を押すと名前を変えられます。（' + ownedN + ' / ' + CATS.length + '匹）' })));
   const grid = h('div', { class:'cats' });
   CATS.forEach(c => {
-    const own = !!S.cats.owned[c.id], partner = S.cats.partner === c.id;
-    const pic = h('div', { class:'pic' }, catCanvas(c.id, 'sit', 3));
+    const own = !!S.cats.owned[c.id], partner = S.cats.partner === c.id, hasSh = !!S.cats.shiny[c.id];
+    const pic = h('div', { class:'pic' });
+    if (own || !c.gacha) pic.append(catCanvas(c.id, 'sit', 3));
+    else { const cv = document.createElement('canvas'); drawCat(cv, { body:'#c9d3d9', shade:'#c9d3d9', belly:'#c9d3d9', line:'#9fb0ba', eye:'#c9d3d9', mouth:'#c9d3d9', nose:'#c9d3d9', ear:'#c9d3d9', charm:'#c9d3d9' }, 'sit', 3); pic.append(cv); }
     let btn;
     if (partner) btn = h('span', { class:'chip y', text:'いまの相棒' });
     else if (own) btn = h('button', { class:'btn', type:'button', onclick: () => { S.cats.partner = c.id; save(); buddyRender(); buddySay('＼よろしくにゃ／', 'hop'); toast(catName(c.id) + 'が相棒になりました'); go('shop'); } }, '相棒にする');
+    else if (c.gacha) btn = h('span', { class:'chip p', text:'ガチャ限定' });
     else btn = h('button', { class:'btn', type:'button', disabled: S.katsuo < c.price || null, onclick: () => buyCat(c) }, 'かつおぶし ' + c.price);
+    const o = S.cats.owned[c.id];
     grid.append(h('div', { class:'catc' + (partner ? ' partner' : '') + (own ? '' : ' locked') },
       pic,
       h('button', { type:'button', class:'nm', style:'border:0;background:none;padding:0;justify-content:center;width:100%', onclick: own ? () => nameCat(c.id) : null, 'aria-label': own ? '名前を変える' : null },
-        own ? catName(c.id) + ' ✎' : c.name),
-      h('div', { class:'pr', text: own ? c.name : RARITY(c.price) }), btn));
+        own ? catName(c.id) + ' ✎' : (c.gacha ? '？？？' : c.name)),
+      h('div', { class:'pr', text: own ? c.name + '・Lv' + (o.lv || 1) : RARITY(c.price) }),
+      own && hasSh ? h('button', { class:'btn small' + (o.sv ? ' pink' : ''), type:'button', onclick: () => { o.sv = !o.sv; save(); buddyRender(); go('shop'); } }, o.sv ? '色ちがい中' : '色ちがいにする') : null,
+      btn));
   });
   v.append(grid);
-
+}
+function renderSettings(v){
   // 設定
   const goalNum = h('b', { style:'font-weight:400;font-size:18px;min-width:2.5em;text-align:center', text: S.goal + '問' });
   v.append(h('section', { class:'card' },
@@ -1186,7 +1279,7 @@ function buyCat(c){
       h('button', { class:'btn primary', type:'button', onclick: () => {
         if (S.katsuo < c.price) return;
         setKatsuo(S.katsuo - c.price);
-        S.cats.owned[c.id] = { name: c.name, got: today() }; save();
+        S.cats.owned[c.id] = { name: c.name, got: today(), lv:1, exp:0, wear:{} }; save(); setTimeout(checkBadges, 600);
         nameCat(c.id, true);
       } }, '仲間にする')));
 }
@@ -1226,9 +1319,577 @@ function importData(){
         try {
           const d = JSON.parse(ta.value);
           if (!d || d.v !== 1 || !d.cats) throw new Error('bad');
-          S = Object.assign(fresh(), d); save(); setKatsuo(S.katsuo); buddyRender(); closeSheet(); toast('読み込みました'); go('home');
+          S = migrate(Object.assign(fresh(), d)); save(); setKatsuo(S.katsuo); buddyRender(); closeSheet(); toast('読み込みました'); go('home');
         } catch(e) { toast('読み込めませんでした。データ全部を貼り付けたか確認してね'); }
       } }, '読み込む')));
+}
+
+/* =========================================================
+   相棒をそだてる（レベル・きせかえ）
+   ========================================================= */
+const needExp = lv => lv * 3;
+const LV_SAY = {
+  2:['＼リボン、にあうかにゃ？／'], 3:['＼めがねで よく見えるにゃ／','＼コードの ; も見のがさないにゃ／'],
+  4:['＼マフラーあったかいにゃ／'], 5:['＼いっしょにいると たのしいにゃ／'], 6:['＼きょうは どの問題やるにゃ？／'],
+  7:['＼はちまき しめて がんばるにゃ／'], 8:['＼サングラスで クールにゃ／'], 9:['＼ぼうし かぶって おでかけにゃ／'],
+  10:['＼ずっと いっしょにゃ／','＼もう 大親友にゃ／']
+};
+function ownedRec(id){ return S.cats.owned[id]; }
+function gainExp(id, n, quiet){
+  const o = ownedRec(id); if (!o) return;
+  if (o.lv == null) { o.lv = 1; o.exp = 0; o.wear = {}; }
+  if (o.lv >= 10) return;
+  o.exp += n;
+  let up = false;
+  while (o.lv < 10 && o.exp >= needExp(o.lv)) { o.exp -= needExp(o.lv); o.lv++; up = true; }
+  if (o.lv >= 10) o.exp = 0;
+  save();
+  if (up) {
+    const newWear = Object.entries(WEAR).filter(([k, w]) => w.lv === o.lv).map(([k, w]) => w.name);
+    setTimeout(() => {
+      toast(catName(id) + ' が Lv' + o.lv + ' になった！' + (newWear.length ? '（' + newWear.join('・') + ' がもらえた）' : ''));
+      buddySay('＼レベルアップにゃ！／', 'hop');
+    }, quiet ? 1200 : 0);
+  }
+}
+function tapLines(){
+  const o = ownedRec(S.cats.partner) || { lv:1 };
+  let a = SAY.tap.slice();
+  for (let l = 2; l <= (o.lv || 1); l++) a = a.concat(LV_SAY[l] || []);
+  return a;
+}
+function renderBuddy(v){
+  const id = S.cats.partner, o = ownedRec(id);
+  if (o.lv == null) { o.lv = 1; o.exp = 0; o.wear = {}; }
+  const pic = h('div', { class:'buddy-big' }, catCanvas(id, 'sit', 7));
+  const bar = h('div', { class:'expbar' }, h('i', { style:'width:' + (o.lv >= 10 ? 100 : (o.exp / needExp(o.lv) * 100)) + '%' }));
+  const feed = (n) => {
+    if (S.katsuo < n) { toast('かつおぶしが足りないにゃ'); return; }
+    setKatsuo(S.katsuo - n); gainExp(id, n); save();
+    pic.animate([{ transform:'translateY(0)' }, { transform:'translateY(-10px)' }, { transform:'translateY(0)' }], { duration:350 });
+    const heart = h('span', { class:'heart', text:'♥' }); pic.append(heart); setTimeout(() => heart.remove(), 900);
+    buddySay(pick(['＼おいしいにゃ！／','＼もっとほしいにゃ／','＼しあわせにゃ…／']), 'hop');
+    setTimeout(() => { go('shop'); checkBadges(); }, 700);
+  };
+  v.append(h('section', { class:'card', style:'display:grid;gap:10px;justify-items:center;text-align:center' },
+    h('div', { class:'label', text:'MY BUDDY' }), pic,
+    h('div', { class:'h', text: catName(id) }),
+    h('div', { class:'lvline' }, h('b', { text:'Lv ' + o.lv }), o.lv >= 10 ? h('span', { class:'sub', text:'さいこうレベル！' }) : h('span', { class:'sub', text:'つぎのレベルまで ' + (needExp(o.lv) - o.exp) })),
+    bar,
+    h('p', { class:'sub', text:'問題をクリアしても、少しずつ育ちます。' }),
+    o.lv < 10 ? h('div', { class:'btns', style:'width:100%' },
+      h('button', { class:'btn', type:'button', disabled: S.katsuo < 1 || null, onclick: () => feed(1) }, 'かつおぶし 1こ あげる'),
+      h('button', { class:'btn primary', type:'button', disabled: S.katsuo < 5 || null, onclick: () => feed(5) }, '5こ あげる')) : null));
+
+  const grid = h('div', { class:'wears' });
+  Object.entries(WEAR).forEach(([k, w]) => {
+    const on = o.wear && o.wear[w.slot] === k, can = o.lv >= w.lv;
+    const prev = document.createElement('canvas');
+    drawCat(prev, Object.assign({}, catDef(id), { wear: { [w.slot]: k } }), 'sit', 2);
+    grid.append(h('button', { type:'button', class:'wear' + (on ? ' on' : '') + (can ? '' : ' locked'), disabled: !can || null,
+      onclick: () => { o.wear = o.wear || {}; if (on) delete o.wear[w.slot]; else o.wear[w.slot] = k; save(); buddyRender(); go('shop'); } },
+      can ? prev : h('span', { class:'lockic', text:'?' }), h('small', { text: can ? w.name : 'Lv' + w.lv + 'で' })));
+  });
+  v.append(h('section', { class:'card' }, h('div', { class:'label', text:'DRESS UP' }), h('div', { class:'h', text:'きせかえ' }),
+    h('p', { class:'sub', text:'タップでつける・はずす。頭・顔・ほっぺ・首に1つずつつけられます。' }), grid));
+}
+
+/* =========================================================
+   ねこ缶ガチャ
+   ========================================================= */
+const GACHA_1 = 8, GACHA_10 = 75;
+const TIERS = [ ['ふつう', 0.58], ['ちょっとレア', 0.28], ['レア', 0.10], ['とってもレア', 0.04] ];
+function pullOne(){
+  let r = Math.random(), tier = TIERS[0][0];
+  for (const [t, p] of TIERS) { if (r < p) { tier = t; break; } r -= p; }
+  const pool = CATS.filter(c => c.id !== 'shiro' && RARITY(c.price) === tier);
+  const c = pick(pool.length ? pool : CATS.slice(1));
+  const isShiny = Math.random() < 0.05;
+  const res = { id: c.id, tier: RARITY(c.price), isNew: false, shiny: false, dup: false };
+  if (!S.cats.owned[c.id]) { S.cats.owned[c.id] = { name: c.name, got: today(), lv:1, exp:0, wear:{} }; res.isNew = true; }
+  if (isShiny && !S.cats.shiny[c.id]) { S.cats.shiny[c.id] = today(); res.shiny = true; }
+  if (!res.isNew && !res.shiny) { res.dup = true; }
+  return res;
+}
+function gacha(n, ticket){
+  const cost = n === 10 ? GACHA_10 : GACHA_1;
+  if (ticket) { if (!life().gticket) return; life().gticket--; }
+  else { if (S.katsuo < cost) { toast('かつおぶしが足りないにゃ'); return; } setKatsuo(S.katsuo - cost); }
+  const res = []; for (let i = 0; i < n; i++) res.push(pullOne());
+  const back = res.filter(r => r.dup).length * 2;
+  if (back) setKatsuo(S.katsuo + back);
+  S.stat.gacha += n; save();
+  const can = h('div', { class:'can shake' }, h('div', { class:'can-top' }), h('div', { class:'can-label', text:'NEKO' }));
+  openSheet(h('div', { style:'display:grid;place-items:center;padding:20px 0' }, can), h('p', { class:'sub', style:'text-align:center', text:'ねこ缶をあけています…' }));
+  const best = res.some(r => r.tier === 'とってもレア' || r.shiny) ? ' gold' : res.some(r => r.tier === 'レア') ? ' rare' : '';
+  setTimeout(() => { can.className = 'can open' + best; }, 900);
+  setTimeout(() => {
+    const grid = h('div', { class: 'gres' + (n === 1 ? ' one' : '') });
+    res.forEach(r => {
+      const c = catDef(r.id);
+      const cv = document.createElement('canvas'); drawCat(cv, r.shiny ? shiny(c) : c, 'sit', n === 1 ? 6 : 2);
+      grid.append(h('div', { class:'gcard t' + TIERS.findIndex(t => t[0] === r.tier) + (r.shiny ? ' sh' : '') }, cv,
+        h('b', { text: CATS.find(x => x.id === r.id).name }),
+        h('small', { text: r.shiny ? '色ちがい！' : r.isNew ? 'NEW　' + r.tier : 'もう持ってる（+2）' })));
+    });
+    openSheet(h('div', { class:'h', style:'text-align:center', text: n === 1 ? (res[0].isNew || res[0].shiny ? 'あたらしい仲間！' : 'もう仲間だったにゃ') : '10回の結果' }),
+      grid, back ? h('p', { class:'sub', style:'text-align:center', text:'もう持ってたねこの分、かつおぶし ' + back + 'こ もどってきました' }) : null,
+      h('div', { class:'btns' },
+        h('button', { class:'btn', type:'button', onclick: () => { closeSheet(); go('shop'); checkBadges(); } }, '閉じる'),
+        h('button', { class:'btn primary', type:'button', disabled: S.katsuo < (n === 10 ? GACHA_10 : GACHA_1) || null, onclick: () => gacha(n) }, 'もう一回')));
+    buddySay(res.some(r => r.isNew || r.shiny) ? '＼なかまがふえたにゃ！／' : '＼また会えたにゃ／', 'hop');
+  }, 1700);
+}
+function renderGacha(v){
+  const can = h('div', { class:'can idle' }, h('div', { class:'can-top' }), h('div', { class:'can-label', text:'NEKO' }));
+  v.append(h('section', { class:'card', style:'display:grid;gap:12px;justify-items:center;text-align:center' },
+    h('div', { class:'label', text:'NEKO GACHA' }), h('div', { class:'h', text:'ねこ缶ガチャ' }), can,
+    h('p', { class:'sub', text:'あけると ねこが仲間になるよ。ガチャでしか会えない ねこや、たまに「色ちがい」も。' }),
+    life().gticket ? h('button', { class:'btn pink wide', type:'button', onclick: () => gacha(1, true) }, 'ガチャ券で1回（' + life().gticket + 'まい）') : null,
+    h('div', { class:'btns', style:'width:100%' },
+      h('button', { class:'btn', type:'button', disabled: S.katsuo < GACHA_1 || null, onclick: () => gacha(1) }, '1回　かつおぶし ' + GACHA_1),
+      h('button', { class:'btn primary', type:'button', disabled: S.katsuo < GACHA_10 || null, onclick: () => gacha(10) }, '10回　' + GACHA_10)),
+    h('div', { class:'odds' }, TIERS.map(([t, p]) => h('span', { text: t + ' ' + Math.round(p * 100) + '%' })), h('span', { text:'色ちがい 5%' }))));
+}
+
+/* =========================================================
+   称号とバッジ
+   ========================================================= */
+function unitsAll(){
+  const m = {}; PROBS.forEach(p => { const k = p.course + ':' + p.unit; (m[k] = m[k] || []).push(p); }); return m;
+}
+function badgeList(){
+  const owned = Object.keys(S.cats.owned).length;
+  const lvMax = Math.max(1, ...Object.values(S.cats.owned).map(o => o.lv || 1));
+  const walkN = WALK.filter(w => S.walk[w.id] && S.walk[w.id].cleared).length;
+  const rvN = Object.values(S.review).filter(r => r.status === 'cleared').length;
+  const st = streak(), b = [];
+  const add = (id, name, desc, ok) => b.push({ id, name, desc, ok: !!ok });
+  add('first', 'はじめの一歩', '1つクリアする', S.stat.clears >= 1);
+  add('c30', 'コツコツねこ', '30段階クリア', S.stat.clears >= 30);
+  add('c80', 'がんばりねこ', '80段階クリア', S.stat.clears >= 80);
+  add('c150', 'ベテランねこ', '150段階クリア', S.stat.clears >= 150);
+  add('s3', '3日つづいた', '3日れんぞくで練習', st >= 3);
+  add('s7', '1週間ねこ', '7日れんぞくで練習', st >= 7);
+  add('s30', '1か月ねこ', '30日れんぞくで練習', st >= 30);
+  add('k3', 'コンボはじめ', 'ミスなしで3回つづけて正解', S.stat.bestCombo >= 3);
+  add('k5', '5コンボ名人', 'ミスなしで5回つづけて正解', S.stat.bestCombo >= 5);
+  add('k10', '10コンボの達人', 'ミスなしで10回つづけて正解', S.stat.bestCombo >= 10);
+  add('nh5', 'ノーヒント5', '「見ないで書く」をヒントなし・ミスなしで5問', S.stat.blindClean >= 5);
+  add('nh20', 'ノーヒント20', '「見ないで書く」をヒントなし・ミスなしで20問', S.stat.blindClean >= 20);
+  Object.entries(unitsAll()).forEach(([k, ps]) => {
+    const unit = k.split(':')[1];
+    add('u:' + k, unit + 'マスター', '「' + unit + '」の問題を全部の段階クリア', ps.every(p => p.stages.every((x, i) => stageDone(p.id, i))));
+  });
+  add('rv5', '復習の達人', '復習で5問クリア', rvN >= 5);
+  add('e100', 'かつおぶし長者', 'かつおぶしを合計100こ もらう', S.stat.earned >= 100);
+  add('cat5', 'ねこ好き', 'ねこを5匹 仲間にする', owned >= 5);
+  add('cat15', 'ねこだらけ', 'ねこを15匹 仲間にする', owned >= 15);
+  add('catAll', 'ねこ博士', 'ねこを全員 仲間にする', owned >= CATS.length);
+  add('shiny', '色ちがいハンター', '色ちがいのねこに会う', Object.keys(S.cats.shiny).length >= 1);
+  add('g10', 'ガチャ好き', 'ガチャを10回まわす', S.stat.gacha >= 10);
+  add('lv5', '相棒と仲よし', '相棒を Lv5 にする', lvMax >= 5);
+  add('lv10', '大親友', '相棒を Lv10 にする', lvMax >= 10);
+  add('w3', 'ねこ使い', 'ねこ散歩を3つクリア', walkN >= 3);
+  add('wAll', 'プログラマーねこ', 'ねこ散歩を全部クリア', walkN >= WALK.length);
+  return b;
+}
+function checkBadges(){
+  const got = badgeList().filter(b => b.ok && !S.badges[b.id]);
+  if (!got.length) return;
+  got.forEach(b => S.badges[b.id] = today());
+  save();
+  openSheet(h('div', { class:'label', style:'text-align:center', text:'NEW BADGE' }),
+    h('div', { class:'h', style:'text-align:center', text:'称号ゲット！' }),
+    h('div', { class:'newbadges' }, got.map(b => h('div', { class:'badge-big' }, h('b', { text: b.name }), h('small', { text: b.desc })))),
+    h('p', { class:'sub', style:'text-align:center', text:'「記録」で、ホームに出す称号をえらべます。' }),
+    h('button', { class:'btn primary wide', type:'button', onclick: closeSheet }, 'やったー'));
+  buddySay('＼称号ゲットにゃ！／', 'hop');
+}
+function renderBadges(v){
+  const list = badgeList();
+  const n = list.filter(b => S.badges[b.id]).length;
+  const grid = h('div', { class:'badges' });
+  list.forEach(b => {
+    const got = !!S.badges[b.id], on = S.title === b.id;
+    grid.append(h('button', { type:'button', class:'bdg' + (got ? ' got' : '') + (on ? ' on' : ''), disabled: !got || null,
+      onclick: () => { S.title = on ? null : b.id; save(); toast(on ? '称号をはずしました' : '「' + b.name + '」をホームに出します'); go('record'); } },
+      h('b', { text: got ? b.name : '？？？' }), h('small', { text: b.desc })));
+  });
+  v.append(h('section', { class:'card' }, h('div', { class:'label', text:'BADGES' }),
+    h('div', { class:'spread' }, h('div', { class:'h', text:'称号' }), h('span', { class:'chip y', text: n + ' / ' + list.length })),
+    h('p', { class:'sub', text:'もらった称号をタップすると、ホームに出せます。' }), grid));
+}
+function titleName(){ if (!S.title) return null; const b = badgeList().find(x => x.id === S.title); return b ? b.name : null; }
+
+/* =========================================================
+   ねこ散歩（コードでねこを動かす）
+   ========================================================= */
+const CMDS = {
+  walk:   ['walk()', '1マス 前に進む'],
+  turnRight: ['turnRight()', '右を向く'],
+  turnLeft:  ['turnLeft()', '左を向く'],
+  jump:   ['jump()', '1マス とびこえて 2マス進む'],
+  eat:    ['eat()', '魚を食べる'],
+  isFish: ['isFish()', 'いるマスに魚があれば true'],
+  isRock: ['isRock()', '前のマスが岩（か はじ）なら true']
+};
+const USE = {
+  for: wm('\\bfor\\s*\\(', 'for を使ってね'), if: wm('\\bif\\s*\\(', 'if を使ってね'),
+  fn: wm('\\bfunction\\s+[A-Za-z_$]', '自分で function を作ってね'), arr: wm('\\[', '配列 [ ] を使ってね'),
+  ffor: wm('for[\\s\\S]*for', 'for の中に for を入れてね')
+};
+function wm(re, ja){ return { re, ja }; }
+const WALK = [
+  { id:'w1', title:'まっすぐ歩く', map:['c...f'], cmds:['walk','eat'],
+    task:'walk() で1マス進むよ。魚のマスまで歩いて、eat() で食べよう。', steps:['魚までは何マス？','その数だけ walk(); を書く','最後に eat();'] },
+  { id:'w2', title:'2ひき食べる', map:['c.f..f'], cmds:['walk','eat'],
+    task:'魚が2ひき。両方食べよう。', steps:['1ぴき目まで歩いて eat();','そこから2ひき目まで歩いて eat();'] },
+  { id:'w3', title:'曲がる', map:['c...','....','...f'], cmds:['walk','turnRight','eat'],
+    task:'turnRight() で右を向くよ。角を曲がって魚を食べよう。', steps:['右へ3マス','turnRight(); で下を向く','下へ2マス進んで eat();'] },
+  { id:'w4', title:'ジャンプ', map:['c.#.f'], cmds:['walk','jump','eat'],
+    task:'岩（灰色）にはぶつかっちゃう。jump() で岩をとびこえよう。', steps:['岩の手前まで walk();','jump(); で岩をこえる','魚まで歩いて eat();'] },
+  { id:'w5', title:'for でまっすぐ', map:['c.........f'], cmds:['walk','eat'], must:['for'],
+    task:'10マス先の魚。walk(); を10回書くかわりに、for でくり返そう。', steps:['for で10回くり返す','{ } の中に walk();','for のあとで eat();'] },
+  { id:'w6', title:'for で何回も食べる', map:['cffffff'], cmds:['walk','eat'], must:['for'],
+    task:'魚がずらり6ぴき。for の中に2つの命令を入れよう。', steps:['for で6回くり返す','{ } の中に walk(); と eat(); の2つ'] },
+  { id:'w7', title:'階段をおりる', map:['c..#.','.....','.....','#....','....f'], cmds:['walk','turnRight','turnLeft','eat'], must:['for'],
+    task:'右・下・右・下…と階段みたいに進もう。くり返しのもようを見つけてね。', steps:['1段分：右へ1マス → 下を向く → 下へ1マス → 右を向く','それを for で4回','最後に eat();'] },
+  { id:'w8', title:'if で魚をさがす', map:['c.f.ff..f.'], cmds:['walk','eat','isFish'], must:['for','if'],
+    task:'1マスずつ進んで、魚があるマスだけで食べよう。isFish() は魚があると true。', steps:['for で9回くり返す','{ } の中で walk();','そのあと、もし isFish() なら eat();'] },
+  { id:'w9', title:'if と else で岩をよける', map:['c.#..#.#..f'], cmds:['walk','jump','eat','isRock','isFish'], must:['for','if'],
+    task:'岩がどこにあっても進めるようにしよう。isRock() は前が岩だと true。全部食べたら、残りの命令は気にしなくていいよ。', steps:['for で10回くらいくり返す','もし isRock() なら jump();、そうでなければ walk();','そのあと、もし isFish() なら eat();'] },
+  { id:'w10', title:'関数で四角く歩く', map:['c..f','....','....','f..f'], cmds:['walk','turnRight','eat'], must:['fn'],
+    task:'角に魚が3びき。「3マス歩いて食べて右を向く」を関数にして、3回呼ぼう。', steps:['function side() { … } を作る','中身：walk(); を3回 → eat(); → turnRight();','side(); を3回書く'] },
+  { id:'w11', title:'配列で道順', map:['c.....','....#.','#.....','...#..','......'], fishAt:[1,1], cmds:['walk','turnRight','eat'], must:['arr','ffor'],
+    task:'const steps = [2, 3, 1, 2]; は「歩く数」の順番。歩く → 右を向く を配列の数だけくり返して、最後に eat()。', steps:['steps を作る','外の for で steps を1つずつ','中の for で steps[i] 回 walk();','中の for のあとに turnRight();','全部終わったら eat();'] },
+  { id:'w12', title:'まとめの散歩道', map:['c.#....','..#.##.','....#f.'], cmds:['walk','turnRight','turnLeft','jump','eat'],
+    task:'岩をよけて魚まで行こう。書き方は自由！', steps:['まず右へ1マス','下を向いて2マス','右を向いて歩く','岩はジャンプ'] }
+];
+WALK.forEach(w => { if (w.fishAt) { const rows = w.map.map(r => r.split('')); rows[w.fishAt[1]][w.fishAt[0]] = 'f'; w.map = rows.map(r => r.join('')); } });
+
+function walkPrelude(w){
+  let sx = 0, sy = 0, nf = 0;
+  w.map.forEach((r, y) => r.split('').forEach((c, x) => { if (c === 'c') { sx = x; sy = y; } if (c === 'f') nf++; }));
+  const g = JSON.stringify(w.map.map(r => r.replace('c', '.')));
+  // ユーザーのコードと同じ1行目に書くので、行番号はずれない
+  return 'var __g=' + g + '.map(function(r){return r.split("")}),__x=' + sx + ',__y=' + sy + ',__d=0,__left=' + nf + ',__n=0,__end=false,__D=[[1,0],[0,1],[-1,0],[0,-1]];' +
+    'function __log(s){if(++__n>400){__end=true;console.log("\\u0001tired");return;}console.log("\\u0001"+s);}' +
+    'function __at(x,y){return (y<0||y>=__g.length||x<0||x>=__g[0].length)?"X":__g[y][x];}' +
+    'function walk(){if(__end)return;var nx=__x+__D[__d][0],ny=__y+__D[__d][1],c=__at(nx,ny);if(c==="X"||c==="#"){__log("bump "+nx+" "+ny);__end=true;return;}__x=nx;__y=ny;__log("move "+__x+" "+__y);}' +
+    'function jump(){if(__end)return;var mx=__x+__D[__d][0],my=__y+__D[__d][1],nx=mx+__D[__d][0],ny=my+__D[__d][1],c=__at(nx,ny);if(__at(mx,my)==="X"||c==="X"||c==="#"){__log("bump "+nx+" "+ny);__end=true;return;}__x=nx;__y=ny;__log("jump "+__x+" "+__y);}' +
+    'function turnRight(){if(__end)return;__d=(__d+1)%4;__log("turn "+__d);}' +
+    'function turnLeft(){if(__end)return;__d=(__d+3)%4;__log("turn "+__d);}' +
+    'function eat(){if(__end)return;if(__g[__y][__x]==="f"){__g[__y][__x]=".";__left--;__log("eat "+__x+" "+__y);if(__left===0){__log("clear");__end=true;}}else __log("noeat");}' +
+    'function isFish(){return __g[__y][__x]==="f";}' +
+    'function isRock(){var c=__at(__x+__D[__d][0],__y+__D[__d][1]);return c==="#"||c==="X";}';
+}
+function renderWalkList(v){
+  const n = WALK.filter(w => S.walk[w.id] && S.walk[w.id].cleared).length;
+  v.append(h('section', { class:'card soft' }, h('div', { class:'spread' }, h('b', { style:'font-weight:400', text:'ねこ散歩' }), h('span', { class:'chip y', text: n + ' / ' + WALK.length })),
+    h('p', { class:'sub', text:'自分で書いたコードで ねこを動かして、魚を全部食べさせよう。はじめてクリアすると かつおぶし +3。' })));
+  const box = h('div', { class:'unit' });
+  WALK.forEach((w, i) => {
+    const done = !!(S.walk[w.id] && S.walk[w.id].cleared);
+    const open = i === 0 || done || (S.walk[WALK[i - 1].id] && S.walk[WALK[i - 1].id].cleared);
+    box.append(h('button', { class:'prob' + (open ? '' : ' locked'), type:'button', disabled: !open || null, onclick: () => openWalk(w.id) },
+      h('div', { class:'pt' }, h('b', { text: (i + 1) + '. ' + w.title }), h('small', { text: done ? 'クリア' : open ? 'つぎはこれ' : 'まえの道をクリアするとひらく' })),
+      h('div', { class:'dots' }, h('i', { class: done ? 'on s3' : '' }))));
+  });
+  v.append(box);
+}
+let walkAnim = null;
+function openWalk(id){
+  leaveTask();
+  clearInterval(homeTimer);
+  UI.screen = 'walk';
+  const w = WALK.find(x => x.id === id), rec = S.walk[id] || {};
+  const v = $('#view'); v.innerHTML = '';
+  const ws = { hint:0, miss:0, solved:false };
+  v.append(h('div', { class:'taskbar' },
+    h('button', { class:'back', type:'button', 'aria-label':'もどる', onclick: () => { UI.pmode = 'walk'; go('practice'); } }),
+    h('div', { class:'tt' }, h('div', { class:'label', text:'ねこ散歩 ・ ' + (WALK.indexOf(w) + 1) }), h('b', { text: w.title })),
+    rec.cleared ? h('span', { class:'chip m', text:'クリア' }) : null));
+
+  // 地図
+  const T = 48, W = w.map[0].length, H = w.map.length;
+  const cv = h('canvas', { class:'walkmap', width: W * T, height: H * T });
+  const catImg = [document.createElement('canvas'), document.createElement('canvas')];
+  drawCat(catImg[0], catDef(S.cats.partner), 'walkA', 2); drawCat(catImg[1], catDef(S.cats.partner), 'walkB', 2);
+  let st;
+  function reset(){
+    st = { g: w.map.map(r => r.replace('c', '.').split('')), x:0, y:0, d:0, flip:false, frame:0, bump:null };
+    w.map.forEach((r, y) => r.split('').forEach((c, x) => { if (c === 'c') { st.x = x; st.y = y; } }));
+  }
+  function paint(){
+    const c = cv.getContext('2d'); c.imageSmoothingEnabled = false;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      c.fillStyle = (x + y) % 2 ? '#d7efc4' : '#cbe8b5'; c.fillRect(x * T, y * T, T, T);
+      const ch = st.g[y][x];
+      if (ch === '#') { c.fillStyle = '#9aa6ae'; c.fillRect(x*T+6, y*T+10, T-12, T-14); c.fillStyle = '#7d8a93'; c.fillRect(x*T+6, y*T+T-10, T-12, 6); c.fillStyle = '#c3ccd2'; c.fillRect(x*T+10, y*T+13, 8, 5); }
+      if (ch === 'f') { const fx = x*T+8, fy = y*T+16; c.fillStyle = '#5aa9d6'; c.fillRect(fx, fy, 18, 9); c.fillRect(fx+18, fy-3, 6, 15); c.fillStyle = '#2f6f99'; c.fillRect(fx+3, fy+2, 3, 3); }
+    }
+    if (st.bump) { c.fillStyle = 'rgba(232,90,90,.45)'; c.fillRect(st.bump[0] * T, st.bump[1] * T, T, T); }
+    const img = catImg[st.frame & 1];
+    c.save();
+    const px = st.x * T + (T - img.width) / 2, py = st.y * T + (T - img.height) / 2 + 4;
+    if (st.flip) { c.translate(px + img.width, py); c.scale(-1, 1); c.drawImage(img, 0, 0); } else c.drawImage(img, px, py);
+    c.restore();
+    // 向きの矢印
+    c.fillStyle = '#f2a93b'; const ax = st.x * T + T/2 + [14,0,-14,0][st.d], ay = st.y * T + T/2 + [0,14,0,-14][st.d];
+    c.beginPath(); c.arc(ax, ay, 4, 0, Math.PI * 2); c.fill();
+  }
+  reset();
+
+  const cmdRow = h('div', { class:'cmds' }, w.cmds.map(k => h('button', { type:'button', class:'cmd', onclick: () => {
+    if (document.activeElement !== ta) { const s = ta._sel || [ta.value.length, ta.value.length]; ta.focus({ preventScroll:true }); ta.setSelectionRange(s[0], s[1]); }
+    putText(ta, CMDS[k][0] + (k.startsWith('is') ? '' : ';'));
+  } }, h('code', { text: CMDS[k][0] }), h('small', { text: CMDS[k][1] }))));
+
+  v.append(h('section', { class:'card', style:'display:grid;gap:10px' },
+    h('div', { class:'label', text:'お題' }), h('p', { class:'task-text', text: w.task }),
+    h('div', { class:'mapwrap' }, cv), h('div', { class:'label', text:'使える命令（タップで入る）' }), cmdRow));
+
+  const key = 'walk:' + id;
+  const ta = codeArea(S.drafts[key] != null ? S.drafts[key] : '', '// ここに ねこへの命令を書こう');
+  ta.addEventListener('input', () => { S.drafts[key] = ta.value; saveSoon(); });
+  v.append(h('div', { class:'editor' }, h('div', { class:'ed-head' }, h('span', { text:'neko.js' }), h('span', { text:'' })), keyBar(ta, 'js'), wrapHL(ta, 'js')));
+  editorKeys(ta, () => run());
+  const runBtn = h('button', { class:'btn primary', type:'button', onclick: () => run() }, '▶ 動かす');
+  const hintBtn = h('button', { class:'btn', type:'button', onclick: () => { if (ws.hint < w.steps.length) { ws.hint++; drawHint(); } } }, 'ヒント');
+  const resetBtn = h('button', { class:'btn', type:'button', onclick: () => { stopAnim(); reset(); paint(); out.innerHTML = ''; } }, 'はじめの場所');
+  const out = h('div', { style:'display:grid;gap:10px' });
+  const hintBox = h('div', { class:'hints' });
+  v.append(h('div', { class:'actions' }, runBtn, hintBtn, resetBtn), out, hintBox);
+  function drawHint(){
+    hintBtn.textContent = 'ヒント ' + ws.hint + '/' + w.steps.length;
+    hintBox.innerHTML = '';
+    if (ws.hint) hintBox.append(h('div', { class:'hint' }, h('div', { class:'hl', text:'考える手順' }),
+      h('ol', { class:'steps' }, w.steps.slice(0, ws.hint).map(t => h('li', { text: t })))));
+  }
+  drawHint();
+  paint();
+  window.scrollTo(0, 0);
+
+  function stopAnim(){ if (walkAnim) { clearInterval(walkAnim); walkAnim = null; } }
+  async function run(){
+    stopAnim(); reset(); paint(); out.innerHTML = '';
+    runBtn.disabled = true;
+    const res = await E.runJS(walkPrelude(w) + ta.value, null);
+    runBtn.disabled = false;
+    const acts = res.lines.filter(l => l.startsWith('\u0001')).map(l => l.slice(1).split(' '));
+    const logs = res.lines.filter(l => !l.startsWith('\u0001'));
+    if (logs.length) out.append(h('div', { class:'out' }, h('div', { class:'lab', text:'コンソール' }), logs.map(x => h('div', { class:'ln', text: x }))));
+    if (res.error && res.error.name !== 'Timeout') {
+      const ja = h('div', { class:'ja', text: res.error.ja, hidden:true });
+      const b = h('button', { type:'button', onclick: () => { ja.hidden = !ja.hidden; b.textContent = ja.hidden ? '日本語にする' : '英語だけにする'; } }, '日本語にする');
+      out.append(h('div', { class:'err' }, h('div', { class:'en', text:'Uncaught ' + res.error.name + ': ' + res.error.msg }), res.error.line ? h('div', { class:'where', text:'（' + res.error.line + '行目）' }) : null, ja, b));
+      if (ta.markLine) ta.markLine(res.error.line);
+    }
+    let i = 0;
+    walkAnim = setInterval(() => {
+      if (i >= acts.length) { stopAnim(); finish(acts, res); return; }
+      const a = acts[i++];
+      if (a[0] === 'move' || a[0] === 'jump') { st.x = +a[1]; st.y = +a[2]; st.frame++; }
+      else if (a[0] === 'turn') { st.d = +a[1]; if (st.d === 0) st.flip = false; if (st.d === 2) st.flip = true; }
+      else if (a[0] === 'eat') { st.g[+a[2]][+a[1]] = '.'; }
+      else if (a[0] === 'bump') { st.bump = [+a[1], +a[2]]; cv.animate([{ transform:'translateX(0)' }, { transform:'translateX(-5px)' }, { transform:'translateX(5px)' }, { transform:'translateX(0)' }], { duration:250 }); }
+      paint();
+    }, 260);
+  }
+  function finish(acts, res){
+    const clear = acts.some(a => a[0] === 'clear');
+    const bump = acts.find(a => a[0] === 'bump');
+    const tired = acts.some(a => a[0] === 'tired');
+    const fails = (w.must || []).map(k => USE[k]).filter(x => !new RegExp(x.re).test(ta.value));
+    let msg = null;
+    if (res.error && res.error.name === 'Timeout') msg = 'ずっと終わらないみたい。くり返しの回数を見てみよう。';
+    else if (res.error) msg = 'エラーで止まったにゃ。英語のメッセージを見てみよう。';
+    else if (bump) msg = (bump[1] < 0 || bump[2] < 0 || +bump[1] >= W || +bump[2] >= H) ? 'はじっこにぶつかったにゃ。' : '岩にぶつかったにゃ。';
+    else if (tired) msg = '動きすぎて つかれちゃったにゃ。';
+    else if (!clear) { const left = st.g.flat().filter(c => c === 'f').length; msg = '魚がまだ ' + left + 'ひき 残ってるにゃ。'; }
+    else if (fails.length) msg = '魚は食べられた！でも ' + fails[0].ja + '。';
+    if (msg) {
+      ws.miss++;
+      out.append(h('div', { class:'verdict ng' }, h('div', { class:'vb', text:'おしい！ ' + msg })));
+      buddySay(pick(SAY.ng), 'shake');
+      return;
+    }
+    const first = !(S.walk[id] && S.walk[id].cleared);
+    S.walk[id] = { cleared:true, date: (S.walk[id] && S.walk[id].date) || today() };
+    let reward = 0;
+    if (first) { reward = 3; setKatsuo(S.katsuo + reward); S.stat.earned += reward; gainExp(S.cats.partner, 1, true); }
+    save();
+    const idx = WALK.indexOf(w), next = WALK[idx + 1];
+    out.append(h('div', { class:'verdict ok' }, h('div', { class:'vb', text:'クリア！ 全部食べたにゃ' }),
+      h('div', { class:'vd', text: reward ? 'かつおぶし +' + reward : 'もうクリア済み' })),
+      h('div', { class:'row' }, next ? h('button', { class:'btn primary', type:'button', onclick: () => openWalk(next.id) }, 'つぎの散歩道へ') : null,
+        h('button', { class:'btn', type:'button', onclick: () => { UI.pmode = 'walk'; go('practice'); } }, 'もどる')));
+    buddySay('＼おなかいっぱいにゃ！／', 'hop');
+    setTimeout(checkBadges, 900);
+  }
+}
+
+/* =========================================================
+   毎日のくらし（ログインボーナス・ねこだより・おなか・家出・おやすみチケット）
+   ========================================================= */
+const dayNum = k => { const [y, mo, d] = k.split('-').map(Number); return Math.round(Date.UTC(y, mo - 1, d) / 864e5); };
+const BONUS = [2, 2, 3, 3, 4, 5, 'ticket'];
+const TICKET_PRICE = 15, TICKET_MAX = 3;
+function life(){
+  if (!S.life) S.life = {};
+  const L = S.life;
+  if (!L.fedDate) L.fedDate = addDays(today(), -1);
+  if (L.bonusDay == null) L.bonusDay = 0;
+  L.rest = L.rest || {}; L.letters = L.letters || [];
+  if (L.tickets == null) L.tickets = 0;
+  if (L.gticket == null) L.gticket = 0;
+  return L;
+}
+function studied(k){ return !!(S.days[k] && S.days[k].items.some(i => i.ok)); }
+// 何日ごはんをもらってない？（0 = 今日もらった / 1 = きのうまでOK / 2 = 1日ぬけた …）
+function hungerDays(){ const L = life(); return dayNum(today()) - dayNum(L.fedDate); }
+function hungerLabel(){
+  const L = life();
+  if (L.away) return { lv:4, t:'家出中', say:'…' };
+  const d = hungerDays();
+  if (d <= 0) return { lv:0, t:'おなかいっぱい', say:'＼ごはん ありがとにゃ／' };
+  if (d === 1) return { lv:1, t:'そろそろごはん', say:'＼きょうの1問、まってるにゃ／' };
+  if (d === 2) return { lv:2, t:'ぺこぺこ・すねてる', say:'＼…ぷい。おなかすいたにゃ／' };
+  return { lv:3, t:'もう がまんの限界', say:'＼あしたも来なかったら 出ていくにゃ…／' };
+}
+function feedToday(){
+  const L = life();
+  const wasAway = L.away;
+  L.fedDate = today(); L.away = false; save();
+  buddyRender();
+  if (wasAway) {
+    setTimeout(() => openSheet(h('div', { class:'pic', style:'display:grid;place-items:center' }, catCanvas(S.cats.partner, 'sit', 6)),
+      h('div', { class:'h', style:'text-align:center', text: catName(S.cats.partner) + 'が 帰ってきた！' }),
+      h('p', { class:'sub', style:'text-align:center', text:'「むかえに来てくれて うれしいにゃ」' }),
+      h('button', { class:'btn primary wide', type:'button', onclick: closeSheet }, 'おかえり')), 1200);
+  }
+}
+// おやすみチケット：練習しなかった日を「お休み」にして、れんぞくとおなかを守る
+function useTickets(){
+  const L = life();
+  let d = dayNum(today()) - dayNum(L.fedDate) - 1;   // ぬけた日数（きのうまで）
+  let k = L.fedDate, used = 0;
+  while (d > 0 && L.tickets > 0) {
+    k = addDays(k, 1); L.rest[k] = true; L.tickets--; L.fedDate = k; d--; used++;
+  }
+  return used;
+}
+const LETTER = {
+  good: [
+    'きのうの夜、{N}は あなたが書いたコードの上で まるくなって寝てたよ。あったかかったみたい。',
+    '{N}が 朝から「きのうの for、かっこよかったにゃ」って言ってたよ。',
+    '{N}が キーボードの ; のところだけ ふみふみしてたよ。おぼえたのかな？',
+    '{N}が 夢の中で { } をかぞえてたみたい。ねごとで「とじかっこ…」って。',
+    '{N}が まどべで ひなたぼっこ中。きょうも いっしょに がんばろうって。',
+    '{N}が あなたの ノートの横で 見はりをしてくれてたよ。'
+  ],
+  miss: [
+    '{N}が げんかんで ずっと待ってたよ。きょうは会えるかな？',
+    '{N}の おなかが ぐぅって鳴ってたよ。',
+    '{N}が つまらなそうに しっぽを ぱたぱたしてるよ。',
+    '{N}が からっぽの おさらを じーっと見てたよ。'
+  ],
+  angry: [
+    '{N}が そっぽを向いてる…。でも ちらちら こっちを見てるよ。',
+    '{N}が「もう知らないにゃ」って言いながら、げんかんから動かないよ。'
+  ],
+  gift: [
+    '{N}が まどの外で かつおぶしを見つけてきたよ！',
+    '{N}が ソファのすきまから かつおぶしを ほり出したよ！',
+    '{N}が となりのねこから かつおぶしを もらってきたよ！'
+  ],
+  away: [
+    '{N}が 家出しちゃった…。テーブルに 足あとのメモ。「おなかすいたにゃ。むかえに来てにゃ」',
+    '{N}の すがたがない…。おさらの横に「さがしてにゃ」の足あと。'
+  ]
+};
+function makeLetter(){
+  const L = life(), N = catName(S.cats.partner), y = addDays(today(), -1);
+  let kind, gift = 0;
+  if (L.away) kind = 'away';
+  else if (hungerDays() >= 2) kind = 'angry';
+  else if (studied(y) || L.rest[y]) kind = Math.random() < 0.3 ? 'gift' : 'good';
+  else kind = 'miss';
+  if (kind === 'gift') gift = pick([1, 2, 2, 3]);
+  const text = pick(LETTER[kind]).replace(/\{N\}/g, N) + (gift ? '（かつおぶし +' + gift + '）' : '');
+  return { date: today(), kind, text, gift };
+}
+function letterSheet(lt, next){
+  openSheet(h('div', { class:'letter' },
+      h('div', { class:'label', text:'けさの ねこだより' }),
+      h('div', { class:'letter-pic' }, lt.kind === 'away' ? h('div', { class:'paws', text:'（るす）' }) : catCanvas(S.cats.partner, 'sit', 4)),
+      h('p', { text: lt.text })),
+    h('button', { class:'btn primary wide', type:'button', onclick: () => { closeSheet(); if (next) setTimeout(next, 250); } }, lt.gift ? 'かつおぶしを もらう' : 'よんだ'));
+}
+function bonusSheet(next){
+  const L = life(), i = L.bonusDay, r = BONUS[i];
+  const days = h('div', { class:'lbonus' }, BONUS.map((b, j) =>
+    h('div', { class:'lb' + (j < i ? ' got' : j === i ? ' now' : '') }, h('small', { text: (j + 1) + '日目' }), h('b', { text: b === 'ticket' ? 'ガチャ券' : '×' + b }))));
+  openSheet(h('div', { class:'label', style:'text-align:center', text:'LOGIN BONUS' }),
+    h('div', { class:'h', style:'text-align:center', text:'ログインボーナス' }), days,
+    h('p', { class:'sub', style:'text-align:center', text: r === 'ticket' ? 'ガチャ券を 1まい もらった！（ガチャが1回むりょう）' : 'かつおぶし +' + r }),
+    h('p', { class:'sub', style:'text-align:center', text:'休んでも リセットされないよ。つぎに来た日に つづきから。' }),
+    h('button', { class:'btn primary wide', type:'button', onclick: () => { closeSheet(); if (next) setTimeout(next, 250); } }, 'うけとる'));
+}
+// その日はじめて開いたとき
+function dailyOpen(){
+  const L = life(), t = today();
+  if (L.openDate === t) return;
+  L.openDate = t;
+  const steps = [];
+  const used = useTickets();
+  if (!L.away && hungerDays() >= 4) L.away = true;     // 3日ごはんなし → 家出
+  // ねこだより
+  const lt = makeLetter(); L.letters.unshift(lt); L.letters = L.letters.slice(0, 14);
+  if (lt.gift) { setKatsuo(S.katsuo + lt.gift); S.stat.earned += lt.gift; }
+  steps.push(next => letterSheet(lt, next));
+  if (used) steps.push(next => { openSheet(h('div', { class:'h', style:'text-align:center', text:'おやすみチケットを使ったよ' }),
+    h('p', { class:'sub', style:'text-align:center', text:'練習しなかった ' + used + '日を「お休み」にしたので、れんぞく記録は つづいています。（のこり ' + L.tickets + 'まい）' }),
+    h('button', { class:'btn primary wide', type:'button', onclick: () => { closeSheet(); setTimeout(next, 250); } }, 'OK')); });
+  // ログインボーナス
+  const r = BONUS[L.bonusDay];
+  if (r === 'ticket') L.gticket++; else { setKatsuo(S.katsuo + r); S.stat.earned += r; }
+  steps.push(next => bonusSheet(next));
+  L.bonusDay = (L.bonusDay + 1) % BONUS.length;
+  save(); buddyRender();
+  const runStep = (i) => { if (i < steps.length) steps[i](() => runStep(i + 1)); else { if (UI.screen === 'home') go('home'); checkBadges(); } };
+  setTimeout(() => runStep(0), 400);
+}
+function rescue(){
+  // おむかえ問題：クリア済みの問題から1つ（なければ つぎの問題）
+  const done = ORDER.filter(k => S.prog[k] && S.prog[k].cleared);
+  const k = done.length ? pick(done) : ORDER.find(k => !(S.prog[k] && S.prog[k].cleared)) || ORDER[0];
+  const x = parseKey(k);
+  openTask(x.pid, x.si, 'normal');
+}
+function lifeCard(){
+  const L = life(), hg = hungerLabel(), N = catName(S.cats.partner);
+  const lt = L.letters[0];
+  if (L.away) return h('section', { class:'card away' },
+    h('div', { class:'label', text:'たいへん！' }), h('div', { class:'h', text: N + 'が 家出中…' }),
+    h('p', { class:'sub', text:'3日 ごはんがなかったので、近所を さんぽしてるみたい。「おむかえ問題」を1問とくと 帰ってくるよ。' }),
+    h('button', { class:'btn primary wide', type:'button', onclick: rescue }, 'おむかえ問題をとく'));
+  const meter = h('div', { class:'hunger l' + hg.lv }, [0, 1, 2].map(i => h('i', { class: i < 3 - Math.min(hg.lv, 3) ? 'on' : '' })));
+  return h('section', { class:'card soft lifecard' },
+    h('div', { class:'spread' }, h('div', { class:'label', text: N + 'の おなか' }), h('span', { class:'chip ' + (hg.lv ? 'p' : 'm'), text: hg.t })),
+    meter,
+    h('p', { class:'sub', text: hg.lv === 0 ? 'きょうのごはんは もらったよ。' : '問題を1問とくと ごはんになるよ。3日あげないと 家出しちゃう…' + (L.tickets ? '（おやすみチケット ' + L.tickets + 'まい）' : '') }),
+    lt ? h('button', { class:'letter-mini', type:'button', onclick: () => letterSheet(lt) }, h('small', { text:'けさの ねこだより' }), h('span', { text: lt.text })) : null);
+}
+function renderTools(v){
+  const L = life();
+  v.append(h('section', { class:'card' }, h('div', { class:'label', text:'ITEMS' }), h('div', { class:'h', text:'どうぐ' }),
+    h('div', { class:'setting' }, h('div', null, h('div', { text:'おやすみチケット（' + L.tickets + ' / ' + TICKET_MAX + 'まい）' }),
+      h('div', { class:'sub', text:'練習できなかった日に 自動で使われて、れんぞく記録と おなかを守ってくれる。' })),
+      h('button', { class:'btn small', type:'button', disabled: (S.katsuo < TICKET_PRICE || L.tickets >= TICKET_MAX) || null, onclick: () => {
+        setKatsuo(S.katsuo - TICKET_PRICE); L.tickets++; save(); toast('おやすみチケットを買いました'); go('shop');
+      } }, 'かつおぶし ' + TICKET_PRICE))));
 }
 
 /* =========================================================
@@ -1237,7 +1898,7 @@ function importData(){
 let lastInput = Date.now(), tick = 0;
 ['pointerdown','keydown','input','scroll','touchstart'].forEach(ev => document.addEventListener(ev, () => { lastInput = Date.now(); }, { passive:true, capture:true }));
 setInterval(() => {
-  const counting = (UI.screen === 'task' || UI.screen === 'free') && !document.hidden && (Date.now() - lastInput) < 120000;
+  const counting = (UI.screen === 'task' || UI.screen === 'free' || UI.screen === 'walk') && !document.hidden && (Date.now() - lastInput) < 120000;
   if (!counting) return;
   dayRec().sec++;
   if (++tick % 15 === 0) save();
@@ -1249,6 +1910,8 @@ window.addEventListener('pagehide', save);
 setKatsuo(S.katsuo);
 buddyRender();
 go('home');
+dailyOpen();
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !session) dailyOpen(); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
