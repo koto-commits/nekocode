@@ -4,7 +4,7 @@
 (function(){
 'use strict';
 const { CATS, drawCat, RARITY, shiny, WEAR } = window.NekoCats;
-const { ALL: PROBS } = window.NekoProblems;
+const { ALL: PROBS, FADE = {} } = window.NekoProblems;
 const E = window.NekoEngine;
 
 /* ---------- 小さな道具 ---------- */
@@ -39,7 +39,7 @@ PROBS.forEach(p => {
   if (p._six) return; p._six = true;
   const b = p.stages[2];
   p.stages = [p.stages[0], p.stages[1],
-    Object.assign({}, b, { kind:'fade', fade:1 }), Object.assign({}, b, { kind:'fade', fade:2 }), Object.assign({}, b, { kind:'fade', fade:3 }), b];
+    ...[1, 2, 3].map(i => Object.assign({}, b, (FADE[p.id] || [])[i - 1] || {}, { kind:'fade', fade:i, starter:'' })), b];
 });
 const STAGE = ['穴埋め','見て書く','半分かくれる','頭文字だけ','手順だけ','見ないで書く'];
 const STAGE_S = ['穴埋め','見て','半分','頭文字','手順','見ないで'];
@@ -184,6 +184,7 @@ let homeTimer = null;
 function go(tab){
   leaveTask();
   if (KB.el) { KB.el.hidden = true; document.body.classList.remove('kb-on'); }
+  KB.peek = null; KB.peekOpen = false;
   UI.tab = tab; UI.screen = tab;
   document.querySelectorAll('#tabbar button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   clearInterval(homeTimer);
@@ -497,7 +498,13 @@ function kbBuild(){
   row.append(tapButton('⇥', kbAct(ta => putText(ta, '  ')), 'arrow', '字下げ'));
   QUICK[kind].forEach(k => row.append(tapButton(k, kbAct(ta => { if (!typeChar(ta, k, kind)) putText(ta, k); }))));
   const more = tapButton(KB.open ? '▼' : '▲', () => { KB.open = !KB.open; kbBuild(); kbPlace(); }, 'more', KB.open ? 'たたむ' : 'もっと見る');
-  const wrap = h('div', { class:'kb-top' }, h('div', { class:'kb-scroll' }, row), more);
+  const peekBtn = KB.peek ? tapButton(KB.peekOpen ? 'とじる' : 'お題', () => { KB.peekOpen = !KB.peekOpen; kbBuild(); kbPlace(); if (KB.ta) setTimeout(() => keepCaretVisible(KB.ta), 50); }, 'peekbtn' + (KB.peekOpen ? ' on' : ''), 'お題を見る') : null;
+  const wrap = h('div', { class:'kb-top' }, peekBtn, h('div', { class:'kb-scroll' }, row), more);
+  if (KB.peek && KB.peekOpen) {
+    const pk = h('div', { class:'kb-peek' }, KB.peek());
+    pk.addEventListener('mousedown', (ev) => ev.preventDefault());
+    el.append(pk);
+  }
   el.append(wrap);
   if (KB.suggest && KB.suggest.length) setTimeout(() => kbSuggest(KB.suggest), 0);
   if (KB.open) {
@@ -639,7 +646,7 @@ function acPaint(){
   d.list.forEach((o, i) => {
     const it = h('div', { class:'ac-it' + (i === AC.sel ? ' on' : ''), role:'option' },
       h('span', { class:'ac-ico ' + o.k, text: o.k === 'mine' ? '箱' : o.k === 'prop' || o.k === 'member' ? '.' : '語' }),
-      h('b', { text: o.w.slice(0, d.prefix.length) }), o.w.slice(d.prefix.length));
+      h('span', { class:'ac-w' }, h('b', { text: o.w.slice(0, d.prefix.length) }), o.w.slice(d.prefix.length)));
     it.addEventListener('mousedown', (e) => { e.preventDefault(); acAccept(AC.ta, o.w); });
     box.append(it);
   });
@@ -849,6 +856,9 @@ function renderTask(v){
     hlPre(fadeText(st.fade === 3 ? p.memo : st.answer, st.fade, kind), kind)));
   if (kind === 'css') card.append(h('details', { class:'fixed' }, h('summary', { text:'この HTML に CSS を当てます（タップで見る）' }), hlPre(st.html, 'html')));
   v.append(card);
+  KB.peek = () => [h('div', { class:'pk-l', text:'お題 ・ ' + STAGE[s.si] }), h('p', { class:'pk-task', text: st.task }),
+    st.kind === 'look' ? hlPre(p.kata, kind, 'mini') : st.kind === 'fade' ? hlPre(fadeText(st.fade === 3 ? p.memo : st.answer, st.fade, kind), kind, 'mini') : null];
+  KB.peekOpen = false;
 
   // 入力
   const draft = S.drafts[key];
@@ -1650,6 +1660,9 @@ function openWalk(id){
     h('div', { class:'label', text:'お題' }), h('p', { class:'task-text', text: w.task }),
     h('div', { class:'mapwrap' }, cv), h('div', { class:'label', text:'使える命令（タップで入る）' }), cmdRow));
 
+  KB.peek = () => { const c2 = document.createElement('canvas'); c2.width = cv.width; c2.height = cv.height; c2.className = 'walkmap'; c2.getContext('2d').drawImage(cv, 0, 0);
+    return [h('p', { class:'pk-task', text: w.task }), c2, h('div', { class:'pk-l', text: w.cmds.map(k => CMDS[k][0]).join('　') })]; };
+  KB.peekOpen = false;
   const key = 'walk:' + id;
   const ta = codeArea(S.drafts[key] != null ? S.drafts[key] : '', '// ここに ねこへの命令を書こう');
   ta.addEventListener('input', () => { S.drafts[key] = ta.value; saveSoon(); });
