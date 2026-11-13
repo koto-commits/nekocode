@@ -459,3 +459,11 @@ textarea.code.hl-ta{overflow:hidden}
 .lb.now{border-color:var(--ink);background:var(--yellow);color:var(--ink);animation:pop .4s ease}
 .card.away{background:var(--pink-soft);display:grid;gap:8px}
 .setting .btn{white-space:nowrap;flex:none}
+.ac-it .ac-w{white-space:pre}
+.kbar button.peekbtn{background:var(--pink-soft);color:var(--ink);font-family:var(--f-ui);font-size:14px;min-width:46px}
+.kbar button.peekbtn.on{background:var(--pink);color:#fff}
+.kb-peek{max-height:34vh;overflow-y:auto;-webkit-overflow-scrolling:touch;background:var(--paper);color:var(--ink);border-radius:10px;padding:8px 10px;display:grid;gap:6px;font-family:var(--f-ui)}
+.kb-peek .pk-l{font-size:11px;color:var(--teal)}
+.kb-peek .pk-task{margin:0;font-size:14px;line-height:1.6}
+.kb-peek pre{margin:0;font-size:13px}
+.kb-peek .walkmap{max-height:22vh;width:auto;max-width:100%}
