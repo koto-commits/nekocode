@@ -357,3 +357,105 @@ textarea.code.hl-ta{overflow:hidden}
 .kb-sug{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
 .kb-sug::-webkit-scrollbar{display:none}
 .kbar .kb-sug button.sug{background:#f6d64a;color:var(--ink);font-size:15px;min-width:auto;padding:0 12px;height:34px}
+
+/* ---------- 6段階 ---------- */
+.stages.six{gap:4px}
+.stages.six button{font-size:11.5px;padding:6px 2px;letter-spacing:-.02em}
+.dots i{width:10px;height:10px}
+.kata.fade .label{color:var(--teal)}
+
+/* ---------- コンボ・大盛り ---------- */
+.combo{display:inline-block;justify-self:start;background:var(--ink);color:var(--yellow);border-radius:8px;padding:2px 10px;font-size:15px;letter-spacing:.04em;animation:pop .35s ease}
+.lucky{display:inline-block;justify-self:start;background:var(--pink);color:#fff;border-radius:8px;padding:2px 10px;font-size:14px;animation:pop .35s ease .1s both}
+@keyframes pop{0%{transform:scale(.6);opacity:0}70%{transform:scale(1.12)}100%{transform:scale(1);opacity:1}}
+
+/* ---------- 相棒 ---------- */
+.buddy-big{position:relative;display:grid;place-items:center;padding:8px 0}
+.buddy-big canvas{image-rendering:pixelated}
+.heart{position:absolute;top:0;right:20%;color:var(--pink);font-size:26px;animation:heart .9s ease forwards}
+@keyframes heart{from{transform:translateY(10px);opacity:1}to{transform:translateY(-30px);opacity:0}}
+.lvline{display:flex;gap:10px;align-items:baseline}
+.lvline b{font-weight:400;font-size:22px}
+.expbar{width:100%;height:14px;border:2px solid var(--ink);border-radius:8px;background:var(--paper-2);overflow:hidden}
+.expbar i{display:block;height:100%;background:var(--pink)}
+.wears{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px}
+.wear{display:grid;justify-items:center;gap:2px;border:2px solid var(--ink);border-radius:10px;background:var(--paper);padding:6px 2px}
+.wear canvas{image-rendering:pixelated}
+.wear.on{background:var(--yellow-soft);box-shadow:inset 0 0 0 2px var(--yellow)}
+.wear.locked{opacity:.55;border-style:dashed}
+.wear small{font-size:12px}
+.lockic{display:grid;place-items:center;width:54px;height:44px;font-size:22px;color:var(--ink-faint)}
+
+/* ---------- ガチャ ---------- */
+.can{position:relative;width:96px;height:110px;border:3px solid var(--ink);border-radius:14px;background:linear-gradient(#cfe9ef,#9fd2de);box-shadow:4px 4px 0 var(--shadow)}
+.can-top{position:absolute;left:-3px;right:-3px;top:-3px;height:22px;border:3px solid var(--ink);border-radius:14px 14px 6px 6px;background:#e9f3f5;transform-origin:10% 100%;transition:transform .5s ease}
+.can-label{position:absolute;left:10px;right:10px;top:44px;border:2px solid var(--ink);border-radius:6px;background:var(--yellow);text-align:center;font-size:14px;letter-spacing:.1em}
+.can.idle{animation:bob 2.4s ease-in-out infinite}
+.can.shake{animation:shake .18s linear infinite}
+.can.open .can-top{transform:rotate(-70deg) translate(-4px,-20px)}
+.can.open.rare{box-shadow:0 0 0 6px #a0d8ef,4px 4px 0 var(--shadow)}
+.can.open.gold{box-shadow:0 0 0 6px var(--yellow),0 0 26px 10px #ffe48a}
+@keyframes bob{50%{transform:translateY(-6px)}}
+@keyframes shake{0%,100%{transform:rotate(0)}25%{transform:rotate(-6deg)}75%{transform:rotate(6deg)}}
+.gres{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin:10px 0}
+.gres.one{grid-template-columns:1fr}
+.gcard{display:grid;justify-items:center;gap:2px;border:2px solid var(--ink);border-radius:10px;background:var(--paper);padding:6px 2px;text-align:center;animation:pop .4s ease both}
+.gcard canvas{image-rendering:pixelated;max-width:100%}
+.gcard b{font-weight:400;font-size:11px;line-height:1.25}
+.gres.one .gcard b{font-size:18px}
+.gcard small{font-size:10px;color:var(--ink-soft)}
+.gres.one .gcard small{font-size:14px}
+.gcard.t1{background:#eaf6fb}
+.gcard.t2{background:#e9e4fb}
+.gcard.t3{background:var(--yellow-soft);box-shadow:0 0 0 3px var(--yellow)}
+.gcard.sh{background:linear-gradient(135deg,#ffe3f0,#e3f4ff,#fff6c9);box-shadow:0 0 0 3px var(--pink)}
+.gres .gcard:nth-child(n){animation-delay:calc(var(--i,0)*60ms)}
+.odds{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 10px;font-size:12px;color:var(--ink-soft)}
+@media (max-width:420px){.gres{grid-template-columns:repeat(3,minmax(0,1fr))}}
+
+/* ---------- 称号 ---------- */
+.title-line{margin-top:6px}
+.ttl-chip{display:inline-block;border:2px solid var(--ink);border-radius:999px;background:var(--pink-soft);padding:1px 12px;font-size:13px}
+.badges{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}
+.bdg{display:grid;gap:2px;text-align:left;border:2px dashed var(--ink-faint);border-radius:10px;background:var(--paper-2);padding:8px 10px;color:var(--ink-faint)}
+.bdg b{font-weight:400;font-size:14px}
+.bdg small{font-size:11px;line-height:1.4}
+.bdg.got{border:2px solid var(--ink);background:var(--paper);color:var(--ink);box-shadow:3px 3px 0 var(--shadow)}
+.bdg.got small{color:var(--ink-soft)}
+.bdg.on{background:var(--yellow-soft);box-shadow:0 0 0 3px var(--yellow)}
+.newbadges{display:grid;gap:8px;margin:12px 0}
+.badge-big{display:grid;gap:2px;text-align:center;border:2px solid var(--ink);border-radius:12px;background:var(--yellow-soft);padding:10px;animation:pop .4s ease}
+.badge-big b{font-weight:400;font-size:20px}
+.badge-big small{font-size:12px;color:var(--ink-soft)}
+
+/* ---------- ねこ散歩 ---------- */
+.prob.locked{opacity:.55;border-style:dashed;box-shadow:none}
+.mapwrap{overflow:hidden;border:2px solid var(--ink);border-radius:10px;background:#cbe8b5}
+.walkmap{display:block;width:100%;height:auto;image-rendering:pixelated}
+.cmds{display:flex;flex-wrap:wrap;gap:6px}
+.cmd{display:grid;gap:1px;text-align:left;border:2px solid var(--ink);border-radius:9px;background:var(--paper);padding:4px 8px}
+.cmd code{font-family:var(--f-code);font-size:14px;color:#1f6feb}
+.cmd small{font-size:10.5px;color:var(--ink-soft)}
+.steps{margin:4px 0 0;padding-left:1.4em;display:grid;gap:3px;font-size:14px}
+
+/* ---------- 毎日のくらし ---------- */
+.lifecard{display:grid;gap:8px}
+.hunger{display:flex;gap:6px}
+.hunger i{width:30px;height:22px;border:2px solid var(--ink);border-radius:6px 6px 12px 12px;background:var(--paper)}
+.hunger i.on{background:#f2a93b}
+.hunger.l2 i.on,.hunger.l3 i.on{background:var(--pink)}
+.letter-mini{display:grid;gap:2px;text-align:left;border:2px solid var(--ink);border-radius:10px;background:#fffaf0;padding:8px 10px;width:100%}
+.letter-mini small{font-size:11px;color:var(--teal)}
+.letter-mini span{font-size:13px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.letter{display:grid;gap:10px;justify-items:center;text-align:center;border:2px solid var(--ink);border-radius:14px;background:#fffaf0;background-image:repeating-linear-gradient(transparent 0 27px,#f1e3c8 27px 28px);padding:14px;margin-bottom:10px}
+.letter p{margin:0;line-height:1.75;font-size:15px}
+.letter-pic canvas{image-rendering:pixelated}
+.paws{font-size:18px;color:var(--ink-soft);padding:20px 0}
+.lbonus{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin:10px 0}
+.lb{display:grid;justify-items:center;gap:2px;border:2px solid var(--ink-faint);border-radius:8px;padding:6px 0;background:var(--paper-2);color:var(--ink-faint)}
+.lb small{font-size:9.5px}
+.lb b{font-weight:400;font-size:12px}
+.lb.got{border-color:var(--ink);background:var(--sky);color:var(--ink)}
+.lb.now{border-color:var(--ink);background:var(--yellow);color:var(--ink);animation:pop .4s ease}
+.card.away{background:var(--pink-soft);display:grid;gap:8px}
+.setting .btn{white-space:nowrap;flex:none}
