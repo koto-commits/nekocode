@@ -1,8 +1,8 @@
 /* ねこコード：ネットがなくても開けるようにする */
-const VERSION = 'nekocode-v8';
+const VERSION = 'nekocode-v9';
 const FILES = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
-  'js/app.js', 'js/cloud.js', 'js/firebase-config.js', 'js/cats.js', 'js/problems.js', 'js/engine.js', 'js/runner-worker.js', 'vendor/acorn.js', 'vendor/prism.js',
+  'js/app.js', 'js/cloud.js', 'js/firebase-config.js', 'js/cats.js', 'js/problems.js', 'js/fades.js', 'js/engine.js', 'js/runner-worker.js', 'vendor/acorn.js', 'vendor/prism.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'
 ];
 self.addEventListener('install', (e) => {
