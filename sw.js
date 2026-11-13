@@ -1,5 +1,5 @@
 /* ねこコード：ネットがなくても開けるようにする */
-const VERSION = 'nekocode-v7';
+const VERSION = 'nekocode-v8';
 const FILES = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/app.js', 'js/cloud.js', 'js/firebase-config.js', 'js/cats.js', 'js/problems.js', 'js/engine.js', 'js/runner-worker.js', 'vendor/acorn.js', 'vendor/prism.js',
