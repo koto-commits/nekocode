@@ -467,3 +467,49 @@ textarea.code.hl-ta{overflow:hidden}
 .kb-peek .pk-task{margin:0;font-size:14px;line-height:1.6}
 .kb-peek pre{margin:0;font-size:13px}
 .kb-peek .walkmap{max-height:22vh;width:auto;max-width:100%}
+
+/* =========================================================
+   PC（広い画面・マウス）だけ：横長レイアウト
+   ========================================================= */
+@media (min-width: 960px) and (pointer: fine){
+  :root{--side:104px}
+  body{padding-left:var(--side)}
+  .app{max-width:1180px;padding-left:28px;padding-right:28px;padding-bottom:40px}
+  /* タブを左のたて並びに */
+  .tabbar{top:0;bottom:0;right:auto;width:var(--side);flex-direction:column;justify-content:flex-start;align-items:center;gap:6px;
+    padding:88px 8px 16px;border-top:0;border-right:2px solid var(--ink)}
+  .tabbar button{flex:none;width:84px;max-width:none;height:70px;margin:0;font-size:12px}
+  .toast{bottom:28px;left:calc(50% + var(--side) / 2)}
+  .sheet{left:var(--side)}
+  .view{gap:20px}
+
+  /* 問題とねこ散歩：左にお題、右にエディタ */
+  .v-task{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:16px 24px;align-items:start}
+  .v-task > .taskbar, .v-task > .stages{grid-column:1 / -1}
+  .v-task > .card{grid-column:1;grid-row:span 6;position:sticky;top:16px;max-height:calc(100vh - 32px);overflow:auto}
+  .v-task > .editor, .v-task > .actions, .v-task > .misses, .v-task > .outarea{grid-column:2}
+  .v-task > .hints{grid-column:2}
+  .v-task .hl-ta, .v-task .hl-under{min-height:300px}
+  .v-walk > .card{grid-row:span 5}
+
+  /* ホーム：左に今日、右に今日の1問など */
+  .v-home{display:grid;grid-template-columns:minmax(0,6fr) minmax(0,5fr);gap:20px 24px;align-items:start}
+  .v-home > .today{grid-column:1;grid-row:span 3}
+  .v-home > *:not(.today){grid-column:2}
+
+  /* 練習：問題を2列に */
+  .v-practice .unit{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .v-practice .unit .unit-name{grid-column:1 / -1}
+  .v-practice .unit .prob{margin:0}
+
+  /* 記録：左にカレンダー、右にまとめと称号 */
+  .v-record{display:grid;grid-template-columns:minmax(0,6fr) minmax(0,5fr);gap:20px 24px;align-items:start}
+  .v-record > .card:first-child{grid-column:1;grid-row:span 4}
+  .v-record > *:not(:first-child){grid-column:2}
+  .v-record .badges{grid-template-columns:repeat(3,minmax(0,1fr))}
+
+  /* ねこ屋さん */
+  .v-shop .cats{grid-template-columns:repeat(6,minmax(0,1fr))}
+  .v-shop .wears{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .v-shop > .seg{max-width:560px}
+}
