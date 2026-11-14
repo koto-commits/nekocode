@@ -241,7 +241,7 @@ function go(tab){
   UI.tab = tab; UI.screen = tab;
   document.querySelectorAll('#tabbar button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   clearInterval(homeTimer);
-  const v = $('#view'); v.innerHTML = '';
+  const v = $('#view'); v.innerHTML = ''; v.className = 'view v-' + tab;
   ({ home:renderHome, practice:renderPractice, free:renderFree, record:renderRecord, shop:renderShop })[tab](v);
   window.scrollTo(0,0);
 }
@@ -872,7 +872,7 @@ function openTask(pid, si, mode, isDaily){
   session = { pid, si, mode, daily: !!isDaily, miss:0, answer:false, last:null, hint:0, solved:false };
   UI.screen = 'task';
   clearInterval(homeTimer);
-  const v = $('#view'); v.innerHTML = '';
+  const v = $('#view'); v.innerHTML = ''; v.className = 'view v-task';
   renderTask(v);
   window.scrollTo(0,0);
 }
@@ -932,7 +932,7 @@ function renderTask(v){
   } }, '戻す');
   v.append(h('div', { class:'actions' }, runBtn, hintBtn, resetBtn), misses);
 
-  const outWrap = h('div', { style:'display:grid;gap:10px' });
+  const outWrap = h('div', { class:'outarea', style:'display:grid;gap:10px' });
   const hintsBox = h('div', { class:'hints' });
   v.append(outWrap, hintsBox);
   updateMisses();
@@ -1679,7 +1679,7 @@ function openWalk(id){
   clearInterval(homeTimer);
   UI.screen = 'walk';
   const w = WALK.find(x => x.id === id), rec = S.walk[id] || {};
-  const v = $('#view'); v.innerHTML = '';
+  const v = $('#view'); v.innerHTML = ''; v.className = 'view v-task v-walk';
   const ws = { hint:0, miss:0, solved:false };
   v.append(h('div', { class:'taskbar' },
     h('button', { class:'back', type:'button', 'aria-label':'もどる', onclick: () => { UI.pmode = 'walk'; go('practice'); } }),
@@ -1736,7 +1736,7 @@ function openWalk(id){
   const runBtn = h('button', { class:'btn primary', type:'button', onclick: () => run() }, '▶ 動かす');
   const hintBtn = h('button', { class:'btn', type:'button', onclick: () => { if (ws.hint < w.steps.length) { ws.hint++; drawHint(); } } }, 'ヒント');
   const resetBtn = h('button', { class:'btn', type:'button', onclick: () => { stopAnim(); reset(); paint(); out.innerHTML = ''; } }, 'はじめの場所');
-  const out = h('div', { style:'display:grid;gap:10px' });
+  const out = h('div', { class:'outarea', style:'display:grid;gap:10px' });
   const hintBox = h('div', { class:'hints' });
   v.append(h('div', { class:'actions' }, runBtn, hintBtn, resetBtn), out, hintBox);
   function drawHint(){
