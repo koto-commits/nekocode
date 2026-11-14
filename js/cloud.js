@@ -23,7 +23,9 @@ if (!cfg || !cfg.apiKey) {
       signOut: () => A.signOut(auth),
       reset: (email) => A.sendPasswordResetEmail(auth, email),
       async load(uid){ const s = await F.getDoc(F.doc(db, 'users', uid)); return s.exists() ? s.data() : null; },
-      save(uid, data){ return F.setDoc(F.doc(db, 'users', uid), data); }
+      save(uid, data){ return F.setDoc(F.doc(db, 'users', uid), data); },
+      // ほかの端末が保存したら、すぐ知らせる
+      watch(uid, cb){ return F.onSnapshot(F.doc(db, 'users', uid), (s) => { if (s.exists() && !s.metadata.hasPendingWrites) cb(s.data()); }, () => {}); }
     });
   } catch (e) {
     ready({ enabled: false, reason: 'offline' });

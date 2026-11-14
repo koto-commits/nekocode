@@ -81,6 +81,7 @@ function migrate(d){
   Object.values(d.cats.owned).forEach(o => { if (o.lv == null) { o.lv = 1; o.exp = 0; o.wear = {}; } });
   if (d.combo == null) d.combo = 0;
   if (!d.life) d.life = { fedDate: addDays(today(), -1) };
+  if (!d.kl) d.kl = { base: { e: d.katsuo || 0, s: 0 } };
   return d;
 }
 function save(quiet){
@@ -97,46 +98,98 @@ async function cloudPush(){
   try { S.syncUid = cloudUser.uid; await window.NekoCloud.save(cloudUser.uid, { data: JSON.stringify(S), updatedAt: S.updatedAt || Date.now() }); }
   catch(e) {}
 }
-function adopt(remote, uid){
-  try {
-    const d = JSON.parse(remote.data);
-    S = migrate(Object.assign(fresh(), d)); S.syncUid = uid; S.updatedAt = remote.updatedAt;
-    save(true); setKatsuo(S.katsuo); buddyRender();
-    if (UI.screen !== 'task') go(UI.tab);
-  } catch(e) {}
+/* 2つの記録をまぜる（どの端末でふえたものも消えないように） */
+const stable = v => Array.isArray(v) ? '[' + v.map(stable).join(',') + ']' : (v && typeof v === 'object') ? '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + stable(v[k])).join(',') + '}' : JSON.stringify(v === undefined ? null : v);
+const canon = d => { const c = Object.assign({}, d); delete c.syncUid; delete c.katsuo; return stable(c); };
+const keyT = it => it.t + '|' + it.key;
+function mergeStates(A, B){
+  const ua = A.updatedAt || 0, ub = B.updatedAt || 0;
+  const newer = ua > ub ? A : ub > ua ? B : (canon(A) >= canon(B) ? A : B), older = newer === A ? B : A;
+  const m = JSON.parse(JSON.stringify(newer));
+  // かつおぶし：端末ごとの「もらった数」「使った数」をそれぞれ大きいほうに
+  m.kl = {};
+  [A.kl || {}, B.kl || {}].forEach(src => Object.keys(src).forEach(k => {
+    const x = m.kl[k] || { e:0, s:0 }; m.kl[k] = { e: Math.max(x.e, src[k].e || 0), s: Math.max(x.s, src[k].s || 0) };
+  }));
+  m.prog = Object.assign({}, older.prog, newer.prog);
+  m.review = Object.assign({}, older.review);
+  Object.entries(newer.review || {}).forEach(([k, r]) => { const o = m.review[k]; if (!o || (r.history || []).length >= (o.history || []).length) m.review[k] = r; });
+  m.days = JSON.parse(JSON.stringify(older.days || {}));
+  Object.entries(newer.days || {}).forEach(([k, d]) => {
+    const o = m.days[k]; if (!o) { m.days[k] = d; return; }
+    const seen = new Set(o.items.map(keyT));
+    m.days[k] = { sec: Math.max(o.sec || 0, d.sec || 0), items: o.items.concat(d.items.filter(it => !seen.has(keyT(it)))) };
+  });
+  m.cats.owned = Object.assign({}, older.cats.owned, newer.cats.owned);
+  Object.keys(older.cats.owned).forEach(id => {
+    const o = older.cats.owned[id], n = newer.cats.owned[id]; if (!n) return;
+    if ((o.lv || 1) * 1000 + (o.exp || 0) > (n.lv || 1) * 1000 + (n.exp || 0)) m.cats.owned[id] = Object.assign({}, n, { lv: o.lv, exp: o.exp });
+  });
+  m.cats.shiny = Object.assign({}, older.cats.shiny, newer.cats.shiny);
+  m.badges = Object.assign({}, older.badges, newer.badges);
+  m.walk = Object.assign({}, older.walk, newer.walk);
+  m.drafts = Object.assign({}, older.drafts, newer.drafts);
+  m.stat = Object.assign({}, older.stat);
+  Object.entries(newer.stat || {}).forEach(([k, v]) => { m.stat[k] = Math.max(m.stat[k] || 0, v || 0); });
+  const lo = older.life || {}, ln = newer.life || {};
+  m.life = Object.assign({}, lo, ln);
+  if ((lo.openDate || '') > (ln.openDate || '')) { m.life.openDate = lo.openDate; m.life.bonusDay = lo.bonusDay; m.life.letters = lo.letters; }
+  if ((lo.fedDate || '') > (ln.fedDate || '')) { m.life.fedDate = lo.fedDate; m.life.away = lo.away; }
+  m.life.rest = Object.assign({}, lo.rest, ln.rest);
+  m.updatedAt = Math.max(A.updatedAt || 0, B.updatedAt || 0);
+  return m;
 }
-function hasProgress(){ return S.katsuo > 0 || Object.keys(S.prog).length > 0 || Object.keys(S.cats.owned).length > 1; }
+function applyMerged(merged, uid){
+  const before = canon(S);
+  S = migrate(merged); S.syncUid = uid; recountKatsuo();
+  save(true); buddyRender();
+  const changed = canon(S) !== before;
+  if (changed && UI.screen !== 'task' && UI.screen !== 'walk' && $('#sheet').hidden) go(UI.tab);
+  return changed;
+}
+let synced = false;
 async function cloudCheck(){
   if (!cloudUser || !cloudOn()) return;
   const uid = cloudUser.uid;
   let remote = null;
-  try { remote = await window.NekoCloud.load(uid); } catch(e) { return; }
-  if (!remote) { S.syncUid = uid; save(); await cloudPush(); toast('記録をクラウドに保存しました'); return; }
-  if (S.syncUid === uid) {
-    if ((remote.updatedAt || 0) > (S.updatedAt || 0)) { adopt(remote, uid); toast('ほかの端末の記録を読み込みました'); }
-    else if ((S.updatedAt || 0) > (remote.updatedAt || 0)) cloudPush();
-    return;
-  }
-  if (!hasProgress()) { adopt(remote, uid); toast('クラウドの記録を読み込みました'); return; }
-  let r = null; try { r = JSON.parse(remote.data); } catch(e) {}
-  openSheet(h('div', { class:'h', text:'どちらの記録を使いますか？' }),
-    h('p', { class:'sub', text:'この端末にも、クラウド（ほかの端末）にも記録があります。使わないほうは上書きされます。' }),
-    h('div', { class:'mini-stats' },
-      h('div', { class:'stat' }, h('b', { text: S.katsuo }), h('span', { text:'この端末のかつおぶし' })),
-      h('div', { class:'stat' }, h('b', { text: r ? r.katsuo : '?' }), h('span', { text:'クラウドのかつおぶし' })),
-      h('div', { class:'stat' }, h('b', { text: r ? Object.keys(r.prog || {}).length : '?' }), h('span', { text:'クラウドのクリア数' }))),
-    h('div', { class:'btns' },
-      h('button', { class:'btn', type:'button', onclick: () => { S.syncUid = uid; save(); cloudPush(); closeSheet(); toast('この端末の記録を使います'); } }, 'この端末'),
-      h('button', { class:'btn primary', type:'button', onclick: () => { adopt(remote, uid); closeSheet(); toast('クラウドの記録を使います'); } }, 'クラウド')));
+  try { remote = await window.NekoCloud.load(uid); } catch(e) { synced = true; return; }
+  if (!remote) { S.syncUid = uid; save(); await cloudPush(); synced = true; toast('記録をクラウドに保存しました'); return; }
+  mergeRemote(remote, uid);
+  synced = true;
 }
+function mergeRemote(remote, uid){
+  let r = null; try { r = migrate(Object.assign(fresh(), JSON.parse(remote.data))); } catch(e) { return; }
+  const merged = mergeStates(S, r);
+  if (applyMerged(merged, uid) && UI.screen === 'home') toast('ほかの端末の記録とあわせました');
+  if (canon(S) !== canon(r)) cloudPushSoon();
+}
+let unwatch = null;
 function cloudInit(){
-  if (!window.NekoCloud || !window.NekoCloud.enabled) { if (UI.tab === 'shop' && UI.screen === 'shop') go('shop'); return; }
-  window.NekoCloud.onUser((u) => { cloudUser = u; if (u) cloudCheck(); if (UI.screen === 'shop') go('shop'); });
+  if (!window.NekoCloud || !window.NekoCloud.enabled) { synced = true; if (UI.tab === 'shop' && UI.screen === 'shop') go('shop'); return; }
+  window.NekoCloud.onUser((u) => {
+    cloudUser = u;
+    if (unwatch) { unwatch(); unwatch = null; }
+    if (u) { cloudCheck(); if (window.NekoCloud.watch) unwatch = window.NekoCloud.watch(u.uid, (remote) => mergeRemote(remote, u.uid)); }
+    else synced = true;
+    if (UI.screen === 'shop') go('shop');
+  });
 }
 if (window.NekoCloud) setTimeout(cloudInit, 0); else window.addEventListener('nekocloud', cloudInit, { once:true });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && cloudUser) cloudCheck(); });
 function dayRec(k){ k = k || today(); if (!S.days[k]) S.days[k] = { sec:0, items:[] }; return S.days[k]; }
-function setKatsuo(n){ S.katsuo = n; $('#katsuoNum').textContent = S.katsuo; }
+/* かつおぶしは「端末ごとに もらった数・使った数」で記録する（同期でまざっても数がずれない） */
+let DEVICE = null;
+try { DEVICE = localStorage.getItem('nekocode-device'); if (!DEVICE) { DEVICE = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); localStorage.setItem('nekocode-device', DEVICE); } } catch(e) { DEVICE = 'd0'; }
+function recountKatsuo(){
+  let t = 0; Object.values(S.kl || {}).forEach(x => { t += (x.e || 0) - (x.s || 0); });
+  S.katsuo = t; const el = $('#katsuoNum'); if (el) el.textContent = t;
+}
+function setKatsuo(n){
+  recountKatsuo();
+  const d = n - S.katsuo;
+  if (d) { const x = S.kl[DEVICE] || (S.kl[DEVICE] = { e:0, s:0 }); if (d > 0) x.e += d; else x.s += -d; }
+  recountKatsuo();
+}
 
 /* ---------- 下から出るシート・お知らせ ---------- */
 function openSheet(...kids){
@@ -1354,7 +1407,7 @@ function gainExp(id, n, quiet){
   while (o.lv < 10 && o.exp >= needExp(o.lv)) { o.exp -= needExp(o.lv); o.lv++; up = true; }
   if (o.lv >= 10) o.exp = 0;
   save();
-  if (up) {
+  if (up && quiet !== 'silent') {
     const newWear = Object.entries(WEAR).filter(([k, w]) => w.lv === o.lv).map(([k, w]) => w.name);
     setTimeout(() => {
       toast(catName(id) + ' が Lv' + o.lv + ' になった！' + (newWear.length ? '（' + newWear.join('・') + ' がもらえた）' : ''));
@@ -1413,12 +1466,23 @@ function pullOne(){
   let r = Math.random(), tier = TIERS[0][0];
   for (const [t, p] of TIERS) { if (r < p) { tier = t; break; } r -= p; }
   const pool = CATS.filter(c => c.id !== 'shiro' && RARITY(c.price) === tier);
-  const c = pick(pool.length ? pool : CATS.slice(1));
+  // もう持っているねこは出にくくする（重み 1 : 0.3）
+  const list = pool.length ? pool : CATS.slice(1);
+  const wt = c => S.cats.owned[c.id] ? 0.3 : 1;
+  let rr = Math.random() * list.reduce((s, c) => s + wt(c), 0), c = list[list.length - 1];
+  for (const x of list) { rr -= wt(x); if (rr < 0) { c = x; break; } }
   const isShiny = Math.random() < 0.05;
   const res = { id: c.id, tier: RARITY(c.price), isNew: false, shiny: false, dup: false };
   if (!S.cats.owned[c.id]) { S.cats.owned[c.id] = { name: c.name, got: today(), lv:1, exp:0, wear:{} }; res.isNew = true; }
   if (isShiny && !S.cats.shiny[c.id]) { S.cats.shiny[c.id] = today(); res.shiny = true; }
-  if (!res.isNew && !res.shiny) { res.dup = true; }
+  if (!res.isNew && !res.shiny) {
+    // かぶったら、そのねこのレベルが1つ上がる（かぶるほど育つ）
+    res.dup = true;
+    const o = S.cats.owned[c.id]; if (o.lv == null) { o.lv = 1; o.exp = 0; o.wear = {}; }
+    res.from = o.lv;
+    if (o.lv < 10) { gainExp(c.id, needExp(o.lv) - o.exp, 'silent'); res.to = o.lv; }
+    else { res.max = true; }
+  }
   return res;
 }
 function gacha(n, ticket){
@@ -1426,7 +1490,7 @@ function gacha(n, ticket){
   if (ticket) { if (!life().gticket) return; life().gticket--; }
   else { if (S.katsuo < cost) { toast('かつおぶしが足りないにゃ'); return; } setKatsuo(S.katsuo - cost); }
   const res = []; for (let i = 0; i < n; i++) res.push(pullOne());
-  const back = res.filter(r => r.dup).length * 2;
+  const back = res.filter(r => r.max).length * 3;
   if (back) setKatsuo(S.katsuo + back);
   S.stat.gacha += n; save();
   const can = h('div', { class:'can shake' }, h('div', { class:'can-top' }), h('div', { class:'can-label', text:'NEKO' }));
@@ -1440,10 +1504,11 @@ function gacha(n, ticket){
       const cv = document.createElement('canvas'); drawCat(cv, r.shiny ? shiny(c) : c, 'sit', n === 1 ? 6 : 2);
       grid.append(h('div', { class:'gcard t' + TIERS.findIndex(t => t[0] === r.tier) + (r.shiny ? ' sh' : '') }, cv,
         h('b', { text: CATS.find(x => x.id === r.id).name }),
-        h('small', { text: r.shiny ? '色ちがい！' : r.isNew ? 'NEW　' + r.tier : 'もう持ってる（+2）' })));
+        h('small', { class: r.dup ? 'lvup' : '', text: r.shiny ? '色ちがい！' : r.isNew ? 'NEW　' + r.tier : r.max ? 'Lv10（+3）' : 'Lv' + r.from + ' → Lv' + r.to })));
     });
-    openSheet(h('div', { class:'h', style:'text-align:center', text: n === 1 ? (res[0].isNew || res[0].shiny ? 'あたらしい仲間！' : 'もう仲間だったにゃ') : '10回の結果' }),
-      grid, back ? h('p', { class:'sub', style:'text-align:center', text:'もう持ってたねこの分、かつおぶし ' + back + 'こ もどってきました' }) : null,
+    openSheet(h('div', { class:'h', style:'text-align:center', text: n === 1 ? (res[0].isNew || res[0].shiny ? 'あたらしい仲間！' : 'かぶった！ レベルアップ') : '10回の結果' }),
+      grid, back ? h('p', { class:'sub', style:'text-align:center', text:'Lv10 のねこがかぶった分、かつおぶし ' + back + 'こ もどってきました' }) : null,
+      res.some(r => r.dup && !r.max) ? h('p', { class:'sub', style:'text-align:center', text:'かぶったねこは レベルが上がったよ（きせかえが増えるかも）' }) : null,
       h('div', { class:'btns' },
         h('button', { class:'btn', type:'button', onclick: () => { closeSheet(); go('shop'); checkBadges(); } }, '閉じる'),
         h('button', { class:'btn primary', type:'button', disabled: S.katsuo < (n === 10 ? GACHA_10 : GACHA_1) || null, onclick: () => gacha(n) }, 'もう一回')));
@@ -1454,7 +1519,7 @@ function renderGacha(v){
   const can = h('div', { class:'can idle' }, h('div', { class:'can-top' }), h('div', { class:'can-label', text:'NEKO' }));
   v.append(h('section', { class:'card', style:'display:grid;gap:12px;justify-items:center;text-align:center' },
     h('div', { class:'label', text:'NEKO GACHA' }), h('div', { class:'h', text:'ねこ缶ガチャ' }), can,
-    h('p', { class:'sub', text:'あけると ねこが仲間になるよ。ガチャでしか会えない ねこや、たまに「色ちがい」も。' }),
+    h('p', { class:'sub', text:'あけると ねこが仲間になるよ。まだ会ってない ねこが出やすい。かぶったら そのねこのレベルが上がるよ。' }),
     life().gticket ? h('button', { class:'btn pink wide', type:'button', onclick: () => gacha(1, true) }, 'ガチャ券で1回（' + life().gticket + 'まい）') : null,
     h('div', { class:'btns', style:'width:100%' },
       h('button', { class:'btn', type:'button', disabled: S.katsuo < GACHA_1 || null, onclick: () => gacha(1) }, '1回　かつおぶし ' + GACHA_1),
@@ -1923,7 +1988,7 @@ window.addEventListener('pagehide', save);
 setKatsuo(S.katsuo);
 buddyRender();
 go('home');
-dailyOpen();
+(function waitSync(t0){ if (synced || Date.now() - t0 > 4000) dailyOpen(); else setTimeout(() => waitSync(t0), 200); })(Date.now());
 document.addEventListener('visibilitychange', () => { if (!document.hidden && !session) dailyOpen(); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
