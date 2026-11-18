@@ -513,3 +513,20 @@ textarea.code.hl-ta{overflow:hidden}
   .v-shop .wears{grid-template-columns:repeat(5,minmax(0,1fr))}
   .v-shop > .seg{max-width:560px}
 }
+
+/* ---------- 大学：えらぶ問題 ---------- */
+.choices{display:grid;gap:8px}
+.choice{display:block;width:100%;text-align:left;border:2px solid var(--ink);border-radius:10px;background:var(--paper);padding:10px 12px;font-size:15px;line-height:1.5;box-shadow:3px 3px 0 var(--shadow);color:var(--ink)}
+.choice.code{background:var(--code-bg);color:var(--code-fg)}
+.choice pre{margin:0;font-family:var(--f-code);font-size:14px;white-space:pre-wrap;word-break:break-all}
+.choice.ok{background:var(--ok-soft);border-color:var(--ok);color:var(--ink)}
+.choice.ok.code{background:#1f3d2c;color:#e6edf3}
+.choice.ng{background:var(--ng-soft);border-color:var(--ng);opacity:.8}
+.choice.ng.code{background:#4a2228;color:#e6edf3}
+.choice:disabled{cursor:default}
+.quiz-exp{white-space:pre-wrap;line-height:1.7}
+.quizbtn{background:var(--yellow-soft)}
+@media (min-width: 960px) and (pointer: fine){
+  .v-quiz{max-width:820px}
+  .v-quiz .choices{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
