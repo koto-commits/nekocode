@@ -45,7 +45,8 @@ const STAGE = ['穴埋め','見て書く','半分かくれる','頭文字だけ'
 const STAGE_S = ['穴埋め','見て','半分','頭文字','手順','見ないで'];
 const NST = STAGE.length, LAST = NST - 1;
 const REWARD = [1,2,1,1,1,3];
-const COURSE = { js:'JavaScript', html:'HTML', css:'CSS' };
+const COURSE = { js:'JavaScript', html:'HTML', css:'CSS', univ:'大学' };
+const UNIV = window.NekoUniv || [];
 const PMAP = {}; PROBS.forEach(p => PMAP[p.id] = p);
 const KEY = (pid, si) => pid + ':' + si;
 const parseKey = k => { const [pid, si] = k.split(':'); return { p: PMAP[pid], pid, si: +si }; };
@@ -80,6 +81,7 @@ function migrate(d){
   d.cats.shiny = d.cats.shiny || {};
   Object.values(d.cats.owned).forEach(o => { if (o.lv == null) { o.lv = 1; o.exp = 0; o.wear = {}; } });
   if (d.combo == null) d.combo = 0;
+  d.quiz = d.quiz || {};
   if (!d.life) d.life = { fedDate: addDays(today(), -1) };
   if (!d.kl) d.kl = { base: { e: d.katsuo || 0, s: 0 } };
   return d;
@@ -128,6 +130,8 @@ function mergeStates(A, B){
   m.cats.shiny = Object.assign({}, older.cats.shiny, newer.cats.shiny);
   m.badges = Object.assign({}, older.badges, newer.badges);
   m.walk = Object.assign({}, older.walk, newer.walk);
+  m.quiz = Object.assign({}, older.quiz, newer.quiz);
+  Object.keys(older.quiz || {}).forEach(k => { if (older.quiz[k].ok && !(m.quiz[k] && m.quiz[k].ok)) m.quiz[k] = older.quiz[k]; });
   m.drafts = Object.assign({}, older.drafts, newer.drafts);
   m.stat = Object.assign({}, older.stat);
   Object.entries(newer.stat || {}).forEach(([k, v]) => { m.stat[k] = Math.max(m.stat[k] || 0, v || 0); });
@@ -369,16 +373,34 @@ function renderPractice(v){
 
   const list = PROBS.filter(p => p.course === course);
   let lastUnit = null, box = null;
+  if (course === 'univ') {
+    v.append(h('section', { class:'card soft' }, h('p', { class:'sub', style:'margin:0', text:'大学「Webアプリケーション開発1」の各回で習ったことを、ねこコード用に新しく作った問題です。えらぶ問題と、書く問題があります。' })));
+    UNIV.forEach(ch => {
+      const ok = ch.quiz.filter(q => S.quiz[q.id] && S.quiz[q.id].ok).length;
+      const b = h('div', { class:'unit' }, h('div', { class:'unit-name', text: ch.name }),
+        h('button', { class:'prob quizbtn', type:'button', onclick: () => openQuiz(ch.id, 0) },
+          h('div', { class:'pt' }, h('b', { text:'えらぶ問題（' + ch.quiz.length + '問）' }), h('small', { text: ok === ch.quiz.length ? '全問正解！' : ok + ' / ' + ch.quiz.length + ' 正解' })),
+          h('div', { class:'dots' }, ch.quiz.map(q => h('i', { class: S.quiz[q.id] && S.quiz[q.id].ok ? 'on s3' : '' })))));
+      list.filter(p => p.unit === ch.name).forEach(p => b.append(probBtn(p)));
+      v.append(b);
+    });
+    return;
+  }
   list.forEach((p, idx) => {
     if (p.unit !== lastUnit) { lastUnit = p.unit; box = h('div', { class:'unit' }, h('div', { class:'unit-name', text: p.unit })); v.append(box); }
+    box.append(probBtn(p));
+  });
+}
+function probBtn(p){
+  {
     const done = p.stages.map((x, i) => stageDone(p.id, i));
     const next = done.indexOf(false);
     const btn = h('button', { class:'prob', type:'button', onclick: () => openTask(p.id, next === -1 ? LAST : next, 'normal') },
       h('div', { class:'pt' }, h('b', { text: p.title }), h('small', { text: next === -1 ? '全部の段階クリア' : 'つぎは「' + STAGE[next] + '」' })),
       h('div', { class:'dots', 'aria-label': done.filter(Boolean).length + '/' + NST }, done.map((d,i) => h('i', { class: d ? 'on' + (i===LAST?' s3':'') : '' })))
     );
-    box.append(btn);
-  });
+    return btn;
+  }
 }
 function reviewHist(r){
   const first = '1回目：' + (r.firstAnswer ? '答えを見た・' : '') + 'ミス' + r.firstMiss + '回';
@@ -886,7 +908,7 @@ function leaveTask(){
 }
 function renderTask(v){
   const s = session, p = PMAP[s.pid], st = p.stages[s.si], key = KEY(s.pid, s.si);
-  const kind = p.course;
+  const kind = p.lang || p.course;
   const top = h('div', { class:'taskbar' },
     h('button', { class:'back', type:'button', 'aria-label':'もどる', onclick: () => go(UI.tab === 'home' ? 'home' : UI.tab) }),
     h('div', { class:'tt' }, h('div', { class:'label', text: COURSE[kind] + ' ・ ' + p.unit }), h('b', { text: p.title })),
@@ -1970,13 +1992,86 @@ function renderTools(v){
       } }, 'かつおぶし ' + TICKET_PRICE))));
 }
 
+
+/* =========================================================
+   大学：えらぶ問題
+   ========================================================= */
+function openQuiz(chId, idx){
+  leaveTask();
+  clearInterval(homeTimer);
+  UI.screen = 'quiz';
+  const ch = UNIV.find(c => c.id === chId), q = ch.quiz[idx];
+  const v = $('#view'); v.innerHTML = ''; v.className = 'view v-quiz';
+  const rec = S.quiz[q.id] || {};
+  v.append(h('div', { class:'taskbar' },
+    h('button', { class:'back', type:'button', 'aria-label':'もどる', onclick: () => go('practice') }),
+    h('div', { class:'tt' }, h('div', { class:'label', text:'大学 ・ ' + ch.name }), h('b', { text:'えらぶ問題 ' + (idx + 1) + ' / ' + ch.quiz.length })),
+    rec.ok ? h('span', { class:'chip m', text:'正解ずみ' }) : null));
+  // 選択肢はまぜて出す
+  const order = q.choices.map((c, i) => i).sort(() => Math.random() - 0.5);
+  const card = h('section', { class:'card', style:'display:grid;gap:12px' },
+    h('div', { class:'label', text:'問題' }), h('p', { class:'task-text', text: q.q }),
+    q.code ? hlPre(q.code, /^</.test(q.code) ? 'html' : 'js') : null);
+  const box = h('div', { class:'choices' });
+  const out = h('div', { class:'outarea', style:'display:grid;gap:10px' });
+  let answered = false, missed = false;
+  order.forEach(i => {
+    const c = q.choices[i];
+    const looksCode = /[(){};=<>'"`\[\]]/.test(c) && !/[ぁ-んァ-ン一-龥]{3,}/.test(c.replace(/'[^']*'/g, ''));
+    const b = h('button', { type:'button', class:'choice' + (looksCode ? ' code' : '') }, looksCode ? h('pre', { text: c }) : c);
+    b.addEventListener('click', () => {
+      if (answered) return;
+      if (i === q.ans) {
+        answered = true; b.classList.add('ok');
+        box.querySelectorAll('.choice').forEach(x => x.disabled = true);
+        solvedQuiz(!missed);
+      } else {
+        missed = true; b.classList.add('ng'); b.disabled = true;
+        if (S.combo >= 2) toast(S.combo + 'コンボで止まりました');
+        S.combo = 0; save();
+        buddySay(pick(SAY.ng), 'shake');
+        out.innerHTML = '';
+        out.append(h('div', { class:'verdict ng' }, h('div', { class:'vb', text:'おしい！ もう一度えらんでみよう' })));
+      }
+    });
+    box.append(b);
+  });
+  card.append(box);
+  v.append(card, out);
+  window.scrollTo(0, 0);
+
+  function solvedQuiz(firstTry){
+    const first = !rec.ok;
+    let reward = 0, combo = 0;
+    if (firstTry) { S.combo = (S.combo || 0) + 1; combo = S.combo; S.stat.bestCombo = Math.max(S.stat.bestCombo, S.combo); }
+    if (first && firstTry) { reward = 1 + (combo >= 10 ? 3 : combo >= 5 ? 2 : combo >= 3 ? 1 : 0); }
+    if (reward) { setKatsuo(S.katsuo + reward); S.stat.earned += reward; }
+    S.quiz[q.id] = { ok: true, date: rec.date || today(), miss: (rec.miss || 0) + (firstTry ? 0 : 1) };
+    if (first) S.stat.clears++;
+    if (life().fedDate !== today() || life().away) feedToday();
+    dayRec().items.push({ key: 'quiz:' + q.id, miss: firstTry ? 0 : 1, answer: false, ok: true, mode: 'quiz', t: Date.now() });
+    save();
+    out.innerHTML = '';
+    const next = ch.quiz[idx + 1];
+    out.append(h('div', { class:'verdict ok' },
+      combo >= 2 ? h('div', { class:'combo', text: combo + ' COMBO' }) : null,
+      h('div', { class:'vb', text: firstTry ? '正解！' : '正解！（2回目以上）' }),
+      reward ? h('div', { class:'vd', text:'かつおぶし +' + reward }) : null,
+      h('div', { class:'vd quiz-exp', text: q.exp })),
+      h('div', { class:'row' },
+        next ? h('button', { class:'btn primary', type:'button', onclick: () => openQuiz(chId, idx + 1) }, 'つぎの問題へ') : h('button', { class:'btn primary', type:'button', onclick: () => go('practice') }, 'この回はおわり！'),
+        h('button', { class:'btn', type:'button', onclick: () => go('practice') }, 'もどる')));
+    buddySay(combo >= 3 ? '＼' + combo + 'コンボにゃ！／' : '＼正解にゃ！／', 'hop');
+    setTimeout(checkBadges, 900);
+  }
+}
 /* =========================================================
    勉強時間（練習・自由の画面を開いている間だけ）
    ========================================================= */
 let lastInput = Date.now(), tick = 0;
 ['pointerdown','keydown','input','scroll','touchstart'].forEach(ev => document.addEventListener(ev, () => { lastInput = Date.now(); }, { passive:true, capture:true }));
 setInterval(() => {
-  const counting = (UI.screen === 'task' || UI.screen === 'free' || UI.screen === 'walk') && !document.hidden && (Date.now() - lastInput) < 120000;
+  const counting = (UI.screen === 'task' || UI.screen === 'free' || UI.screen === 'walk' || UI.screen === 'quiz') && !document.hidden && (Date.now() - lastInput) < 120000;
   if (!counting) return;
   dayRec().sec++;
   if (++tick % 15 === 0) save();
